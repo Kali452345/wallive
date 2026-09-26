@@ -45,31 +45,6 @@ fn frame_duration_hns(fps: (u32, u32)) -> i64 {
     10_000_000 * i64::from(fps.1.max(1)) / i64::from(fps.0.max(1))
 }
 
-/// Benchmark (`--bench-decode`): hardware-decodes every frame of `src` as
-/// fast as possible, `loops` times, and reports CPU milliseconds per frame.
-/// This is the floor any playback pipeline on this machine pays per frame.
-pub fn bench_decode(src: &Path, loops: u32) -> windows::core::Result<()> {
-    let _platform = ffi::Platform::start()?;
-    let device = crate::playback::create_device()?;
-    let mut frames = 0u64;
-    let wall = std::time::Instant::now();
-    let cpu0 = ffi::process_cpu_ms();
-    for _ in 0..loops.max(1) {
-        let decoder = Decoder::open_hardware(src, &device)?;
-        while decoder.next()?.is_some() {
-            frames += 1;
-        }
-    }
-    let cpu = ffi::process_cpu_ms() - cpu0;
-    let secs = wall.elapsed().as_secs_f64();
-    crate::log!(
-        "bench-decode: {frames} frames in {secs:.2} s ({:.0} fps), CPU {cpu:.0} ms = {:.2} ms/frame",
-        frames as f64 / secs,
-        cpu / frames.max(1) as f64
-    );
-    Ok(())
-}
-
 /// Imports `src` into `dst` (MP4, H.264). Returns the output format.
 pub fn import(src: &Path, dst: &Path, monitor: (u32, u32)) -> windows::core::Result<VideoFormat> {
     let _platform = ffi::Platform::start()?;

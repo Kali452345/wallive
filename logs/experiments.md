@@ -73,3 +73,38 @@ Can Wallive put its own window behind the desktop icons on the owner's Windows 1
 - The Media Engine path misses every budget: ~3% CPU vs <1%, ~150 MB vs <30 MB, ~20% GPU (decode + video processing) vs 1-5%.
 - ~75% of the per-frame CPU is Media Engine presentation overhead, not decoding. A Source Reader + own composition swap chain paced by vsync should cost ~2 ms/frame (~0.75% of the CPU at 1080p30). ADR-003's "revisit when" condition is met; next spike replaces the backend and measures it.
 - The 30 MB RAM target looks unreachable while decoder surfaces on an integrated GPU are counted in the process; to be re-measured with the new backend.
+
+## 2026-09-26 - Playback backend 2: Source Reader + video processor + composition swap chain (ADR-003 revised)
+
+### Setup
+
+- Same machine and clips as the Media Engine spike above. `tools/bench.ps1`, 5 s warm-up, 20-40 s windows.
+- Pipeline: `wallive-video` thread; hardware Source Reader (`MF_SOURCE_READER_D3D_MANAGER`, NV12 textures) -> `ID3D11VideoContext::VideoProcessorBlt` (cover crop, scale, BT.709 studio -> RGB full, auto-processing off) -> 2-buffer flip-sequential composition swap chain (frame latency 1) -> DComp visual per wallpaper window.
+
+### Pacing attempts
+
+| Pacing | Result |
+|---|---|
+| `Present(2)` (sync interval) + frame-latency waitable | **~4 fps.** Waitable released every ~250 ms (sometimes 500 ms). DWM throttles vsync-synced presents for our visual - the full-screen icon layer above it makes the window look occluded. `Present(1)` identical. |
+| `Present(0)` + `IDXGIOutput::WaitForVBlank` x N | **~500 fps** - `WaitForVBlank` returns immediately for this windowed swap chain. |
+| `Present(0)` + `DCompositionWaitForCompositorClock` x N (Win11, resolved at run time), control event in the same wait | **30.0 fps**, rewinds exactly every 10.0 s, no hold > 50 ms or decode > 30 ms in 40 s traces. Chosen. |
+
+### Result (1080p30 clip, compositor-clock pacing)
+
+| Run | CPU (% of one core) | CPU (% of all 8) | Working set | GPU video decode | GPU video processing | Achieved fps |
+|---|---|---|---|---|---|---|
+| desktop visible, run 1 | 6.76 | 0.845 | 115 MB | 7.2% | 8.7% | 30.2 / 30.1 / 30.1 |
+| desktop visible, run 2 | 6.35 | 0.794 | 115 MB | 6.4% | 7.7% | 30.2 / 28.4 / 28.9 |
+| desktop visible, run 3 | 6.16 | 0.769 | 114 MB | 6.2% | 7.7% | 22.6 / 28.3 / 22.0 |
+| desktop visible, 40 s | 5.30 | 0.663 | 118 MB | 7.2% | 8.8% | 30.2 / 30.1 / 30.0 |
+| desktop covered, 30 s | 7.85 | 0.981 | 113 MB | 7.2% | 8.8% | 30.2 / 30.1 / 29.7 |
+
+- Runs 2-3 dipped while the machine was busy with unrelated work (system CPU up to 90% and a disk at 96% in the screenshot overlay at the time); later traced runs showed no stalls in our loop.
+- Explorer killed during playback: video thread stopped with the windows, re-attached 130 ms after `TaskbarCreated`, playback resumed at the saved position; screenshot pair shows motion (87.9% of sampled pixels changed) with icons on top.
+- Clean exit on `WM_CLOSE`.
+
+### Conclusion
+
+- vs the Media Engine: CPU 24.6% -> ~6% of a core (3.1% -> ~0.8% of the CPU, **inside the <1% budget**), GPU decode + processing ~21% -> ~15%, working set 155 -> ~115 MB.
+- RAM is still far over the 30 MB target; decoder surfaces, the video processor and two 1080p BGRA swap-chain buffers live in shared memory on this integrated GPU. Next levers: fewer decoder surfaces (`MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT`), NV12 swap chain (no BGRA buffers, no conversion), trimming when paused.
+- Windows 10 has no compositor clock; there the code falls back to `Present(n)`. Whether classic-layout windows get the same ~4 fps throttling is **unverified** (needs a Windows 10 / pre-24H2 machine).

@@ -49,34 +49,39 @@ No runtime or GC, small binary, and memory safety outside of FFI. Owner chose Ru
 
 A required API is missing or unusable in windows-rs.
 
-## ADR-003 - Playback: Media Foundation Media Engine + DirectComposition
+## ADR-003 - Playback: Source Reader + D3D11 video processor + composition swap chain (revised 2026-09-26)
 
 ### Decision
 
-Decode with `IMFMediaEngine` backed by a D3D11 device (hardware decode via DXVA). Use `IMFMediaEngineEx::EnableWindowlessSwapchainMode` and present the swap-chain handle through a DirectComposition visual in the wallpaper window.
+A dedicated video thread decodes with a hardware `IMFSourceReader` (`MF_SOURCE_READER_D3D_MANAGER`, native NV12 D3D11 textures), draws each frame into a flip-model composition swap chain with one `ID3D11VideoContext::VideoProcessorBlt` (cover crop + scale + YCbCr->RGB, driver auto-processing off), and presents with sync interval 0. Frames are held for N display refreshes by waiting on DWM's compositor clock (`DCompositionWaitForCompositorClock`, resolved at run time; Windows 10 falls back to `Present(N)`). The swap chain is the content of one DirectComposition visual per wallpaper window. Pause = the thread blocks on a kernel event.
+
+Originally (first version of this ADR): `IMFMediaEngine` in windowless swap-chain mode. Implemented and measured in commit `5a89838`, then replaced.
 
 ### Context
 
-The lowest-cost path is: GPU fixed-function decoder -> NV12 frame -> compositor, with no shader/3D render pass. Windowless swap-chain mode lets Media Foundation manage presentation and lets DWM use hardware overlay planes (MPO) when the hardware and window qualify.
+The lowest-cost path is: GPU fixed-function decoder -> NV12 frame -> compositor, with no shader/3D render pass. Budget: <1% CPU, 1-5% GPU at 1080p30.
 
 ### Alternatives considered
 
-- mpv / libmpv (used by Lively): hardware decode, but its renderer draws each frame through the 3D engine. Lively has reports of high GPU use with mpv.
-- VLC / libVLC: heavy dependency, same render-pass issue.
-- `IMFSourceReader` + own D3D11 renderer: more control, but we would write the color conversion and frame pacing ourselves and lose MF's overlay handling.
-- FFmpeg decode: large dependency, licensing burden, no benefit over MF for our formats.
+- `IMFMediaEngine` windowless swap chain (first choice): works, but measured ~7-8 ms CPU per frame (24.6% of a core, 3.1% of the CPU at 1080p30) across ~8 MF worker threads; the decode itself costs ~1.7 ms/frame (`--bench-decode`). Output-format and time-update-timer tweaks made no difference.
+- Sync-interval pacing (`Present(2)` + frame-latency waitable): DWM retires those presents only every ~250 ms for a visual under the full-screen icon layer -> ~4 fps.
+- `IDXGIOutput::WaitForVBlank`: returns immediately for this windowed swap chain.
+- A waitable timer at the frame rate: works everywhere, but a timer where an OS frame clock exists (project rule).
+- mpv / libVLC / FFmpeg: heavy runtimes or licensing, and they render through the 3D engine.
 
 ### Why this was selected
 
-It uses the built-in OS pipeline with no extra dependencies and the lowest possible GPU 3D engine usage.
+Measured ~6% of a core (~0.8% of the CPU) at 1080p30, 30.0 fps, seamless loop - 4x less CPU than the Media Engine, with the thread asleep in the kernel between frames. Still no extra dependency.
 
 ### Revisit when
 
-Benchmarks show Media Engine overhead is higher than an `IMFSourceReader` + DComp path, or windowless mode misbehaves inside the desktop window tree.
+- Windows 10 / classic layout shows the same present throttling (then add a `D3DKMTWaitForVerticalBlankEvent` clock).
+- RAM needs to drop further: NV12 swap chain or fewer decoder surfaces.
+- HDR / 10-bit sources are supported (colour spaces are fixed to BT.709 SDR now).
 
 ### Unverified
 
-Whether MPO / overlay planes are used for a window parented under Progman / WorkerW. This is an inference and must be measured (PresentMon shows the present mode).
+Whether MPO / overlay planes are used for the swap chain under Progman / WorkerW (PresentMon shows the present mode).
 
 ## ADR-004 - Output codec: H.264 by default, chosen by hardware probe
 

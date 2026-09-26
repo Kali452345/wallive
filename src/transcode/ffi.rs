@@ -5,25 +5,22 @@
 //! resident wallpaper process.
 #![allow(unsafe_code)]
 
-use windows::Win32::Foundation::FILETIME;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_DECODER_PROFILE_AV1_VLD_PROFILE0, D3D11_DECODER_PROFILE_H264_VLD_NOFGT,
     D3D11_DECODER_PROFILE_HEVC_VLD_MAIN, ID3D11Device, ID3D11VideoDevice,
 };
 use windows::Win32::Media::MediaFoundation::{
-    IMFAttributes, IMFDXGIDeviceManager, IMFMediaType, IMFSample, IMFSinkWriter, IMFSourceReader,
-    MF_MT_AVG_BITRATE, MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
-    MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_MPEG2_PROFILE, MF_MT_PIXEL_ASPECT_RATIO,
-    MF_MT_SUBTYPE, MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, MF_SOURCE_READER_ALL_STREAMS,
-    MF_SOURCE_READER_D3D_MANAGER, MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,
-    MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_SOURCE_READERF_ENDOFSTREAM, MF_VERSION,
-    MFCreateAttributes, MFCreateDXGIDeviceManager, MFCreateMediaType, MFCreateMemoryBuffer,
-    MFCreateSample, MFCreateSinkWriterFromURL, MFCreateSourceReaderFromURL, MFMediaType_Video,
-    MFSTARTUP_FULL, MFShutdown, MFStartup, MFVideoFormat_H264, MFVideoFormat_NV12,
-    MFVideoInterlace_Progressive, eAVEncH264VProfile_High,
+    IMFAttributes, IMFMediaType, IMFSample, IMFSinkWriter, IMFSourceReader, MF_MT_AVG_BITRATE,
+    MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
+    MF_MT_MAJOR_TYPE, MF_MT_MPEG2_PROFILE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
+    MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, MF_SOURCE_READER_ALL_STREAMS,
+    MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+    MF_SOURCE_READERF_ENDOFSTREAM, MF_VERSION, MFCreateAttributes, MFCreateMediaType,
+    MFCreateMemoryBuffer, MFCreateSample, MFCreateSinkWriterFromURL, MFCreateSourceReaderFromURL,
+    MFMediaType_Video, MFSTARTUP_FULL, MFShutdown, MFStartup, MFVideoFormat_H264,
+    MFVideoFormat_NV12, MFVideoInterlace_Progressive, eAVEncH264VProfile_High,
 };
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
-use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
 use windows::core::{HSTRING, Interface, Result};
 
 /// COM (MTA) + Media Foundation for the import process.
@@ -171,33 +168,6 @@ impl Decoder {
         Self::with_attributes(path, &attrs)
     }
 
-    /// Hardware (DXVA) decode on `device`: samples carry D3D11 textures in
-    /// the decoder's native NV12, with no conversion or copy to memory.
-    pub fn open_hardware(path: &std::path::Path, device: &ID3D11Device) -> Result<Self> {
-        let mut token = 0u32;
-        let mut manager: Option<IMFDXGIDeviceManager> = None;
-        // SAFETY: both out-pointers are valid for the call.
-        unsafe { MFCreateDXGIDeviceManager(&mut token, &mut manager) }?;
-        let manager = manager.ok_or_else(windows::core::Error::empty)?;
-        // SAFETY: `token` came from the manager just created.
-        unsafe { manager.ResetDevice(device, token) }?;
-        let attrs = attributes(2)?;
-        // SAFETY: static GUID keys; the store AddRefs the manager.
-        unsafe {
-            attrs.SetUnknown(&MF_SOURCE_READER_D3D_MANAGER, &manager)?;
-            attrs.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1)?;
-        }
-        let decoder = Self::with_attributes(path, &attrs)?;
-        // SAFETY: fresh media type; the reader copies it.
-        unsafe {
-            let t = MFCreateMediaType()?;
-            t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-            t.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)?;
-            decoder.reader.SetCurrentMediaType(FIRST_VIDEO, None, &t)?;
-        }
-        Ok(decoder)
-    }
-
     fn with_attributes(path: &std::path::Path, attrs: &IMFAttributes) -> Result<Self> {
         // SAFETY: path HSTRING outlives the call; attributes are populated.
         let reader =
@@ -257,26 +227,6 @@ impl Decoder {
             }
         }
     }
-}
-
-/// CPU time (user + kernel) this process has used, in milliseconds.
-pub fn process_cpu_ms() -> f64 {
-    let (mut create, mut exit, mut kernel, mut user) = Default::default();
-    // SAFETY: pseudo-handle of this process; all out-pointers are valid.
-    let ok = unsafe {
-        GetProcessTimes(
-            GetCurrentProcess(),
-            &mut create,
-            &mut exit,
-            &mut kernel,
-            &mut user,
-        )
-    };
-    if ok.is_err() {
-        return 0.0;
-    }
-    let ticks = |t: FILETIME| (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime);
-    (ticks(kernel) + ticks(user)) as f64 / 10_000.0
 }
 
 /// Hardware decode support reported by the GPU driver (ADR-004).

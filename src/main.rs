@@ -5,6 +5,7 @@
 //!   wallive --play <video>                   run with <video> (no import)
 //!   wallive --import <src> <dst> <W>x<H>     import child process (ADR-004)
 //!   wallive --make-test-clip <dst> [<W>x<H>] [fps] [secs]
+//!   wallive --bench-decode <video> [loops]   hardware decode cost per frame
 //!
 //! Console output is the log; Ctrl+C exits.
 
@@ -66,7 +67,7 @@ fn main() {
         Some("--bench-decode") => {
             let Some(src) = args.get(1) else { usage() };
             let loops = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3);
-            transcode::bench_decode(src.as_ref(), loops)
+            playback::bench_decode(src.as_ref(), loops)
         }
         Some("--make-test-clip") => {
             let Some(dst) = args.get(1) else { usage() };

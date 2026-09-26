@@ -88,8 +88,8 @@ pub fn run(options: Options) -> windows::core::Result<()> {
 
 fn open_player(host: &Host, path: &std::path::Path) -> windows::core::Result<Player> {
     let mut player = Player::new(host.hwnd())?;
-    player.open(path)?;
     log!("playback: opening {}", path.display());
+    player.open(path);
     Ok(player)
 }
 
