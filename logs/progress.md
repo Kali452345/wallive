@@ -98,3 +98,25 @@ Read `logs/handoff.md`. Start the playback spike in the attached surface window.
 
 - Unverified: exclusive-fullscreen game, Battery / Energy Saver toggles, battery power, session lock.
 - Tray, config, import integration, Start with Windows, single instance, windows subsystem + file log, RAM reduction.
+
+## 2026-09-26 - App shell (ADR-010, ADR-011)
+
+### Changed
+
+- `src/config/`: `config.txt` key=value parser / writer (atomic save), config / cache paths, cache file name hash (5 tests).
+- `src/shell/`: tray menu model, tooltip, runtime-drawn icon (4 tests); FFI for the tray icon, popup menu, HKCU Run autostart, single-instance mutex, `WM_COPYDATA` hand-off, file picker, job object, console attach.
+- `src/runtime/tasks.rs`: picker and import as child processes of the same exe, waiter thread + posted message.
+- `src/runtime/mod.rs`: `App` owns wallpaper, player, tray, config, tasks and pause state; start-up source order (`--play`, argument, saved import, re-import of the saved source, first-run picker).
+- `src/main.rs`: `windows` subsystem, `wallive <video>`, `--quit`, `--pick`, log file with one rotation and a 1 MB cap.
+- `docs/decisions.md`: ADR-010 (benchmark tool), ADR-011 (app shell).
+
+### Verification
+
+- build / clippy / fmt / 59 tests pass.
+- Real desktop: 4K60 source imported to 1080p30 in a child (12.8 s, 425 MB peak in the child) and played; second video sent to the running instance, imported and switched, old cache deleted; restart from config shows the first frame in 261 ms; second instance exits 3; tray menu Pause and Start with Windows verified through `wallive.log` and the registry; picker dialog shown. Tray app playing: 0.886% of the CPU, 90.5 MB (`logs/experiments.md`).
+- Found and fixed: second launch rotated the running instance's log (`logs/errors.md`).
+
+### Remaining
+
+- RAM (~90-120 MB vs the 30 MB target).
+- Unverified: Windows 10 / classic layout, multi-monitor, exclusive-fullscreen game, saver toggles, battery, session lock.

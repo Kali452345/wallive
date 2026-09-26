@@ -136,6 +136,76 @@ Both scripts ran end to end (results in `logs/experiments.md`).
 
 RESOLVED
 
+## Second launch rotated the running instance's log
+
+### Date
+
+2026-09-26
+
+### Area
+
+`src/main.rs` (resident mode, log file).
+
+### Symptoms
+
+After starting `wallive` while it was already running, `wallive.log` held only the second process's lines and the running instance's log had moved to `wallive.old.log`.
+
+### Environment
+
+- Windows 11 26200, release build.
+
+### Root Cause
+
+The log file was opened (and the previous one rotated) before the single-instance mutex was checked.
+
+### Working Fix
+
+`run_resident` acquires `SingleInstance` first and opens the log only after that, and only when it is not the `--play` test mode.
+
+### Verification
+
+Second `wallive` exits with code 3; the running instance keeps writing to the same `wallive.log`.
+
+### Related Files
+
+- `src/main.rs`
+
+### Status
+
+RESOLVED
+
+## Driving the tray from test scripts
+
+### Date
+
+2026-09-26
+
+### Area
+
+Scratch test scripts for the tray menu.
+
+### Symptoms
+
+1. Clicking the tray icon via `Shell_NotifyIconGetRect` opened the overflow flyout instead of the menu.
+2. Menu clicks landed ~25% off target.
+3. Screenshots with `CopyFromScreen` did not contain the popup menu.
+
+### Root Cause
+
+1. Windows 11 puts new tray icons in the overflow area; `Shell_NotifyIconGetRect` then returns the chevron's rect, even with the flyout open.
+2. Windows PowerShell 5.1 is DPI-unaware; the machine runs at 125%.
+3. Popup menus are layered windows; `CopyFromScreen` without CAPTUREBLT misses them (the .NET enum rejects the CaptureBlt combination).
+
+### Working Fix
+
+1. Post the tray callback (`WM_APP+3`, `WM_CONTEXTMENU` in LOWORD of lParam, anchor in wParam) to the `WalliveHost` window, as Explorer does.
+2. Call `SetProcessDPIAware()` first and use physical pixels.
+3. Not needed further: the menu window (`#32768`, owned by the wallive pid) and its rect were located instead, and the clicked command was confirmed in `wallive.log`.
+
+### Status
+
+RESOLVED (workarounds in test scripts only)
+
 ## Template
 
 ### Date

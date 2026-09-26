@@ -283,3 +283,53 @@ No extra dependency; the MSVC linker is already required.
 ### Revisit when
 
 The project needs other resources (tray icon, version info). Then a `.rc` file via a resource crate may replace this.
+
+## ADR-010 - Benchmark mode: an external script, not code in the app
+
+### Decision
+
+Benchmark mode is `tools/bench.ps1`. It starts wallive (or attaches to a running one) and samples it from outside: process CPU time, working set and private bytes, `\GPU Engine(pid_*)\Utilization Percentage` per engine type, and the battery discharge rate from `root\wmi BatteryStatus` when on battery. `tools/pause-check.ps1` does the same per phase while it drives the desktop.
+
+### Context
+
+The brief asks for a benchmark mode that measures CPU / GPU / power. Measuring from inside would put PDH / WMI code and its DLLs in the always-running process.
+
+### Alternatives considered
+
+- A `--bench` flag in wallive using PDH: measures itself, but loads pdh.dll and adds code to the resident binary.
+- PresentMon / WPR traces: more detail (present mode, MPO), but an external download and manual analysis; still useful for one-off investigations.
+
+### Why this was selected
+
+It adds nothing to the resident process, and it measures the real binary with its real flags.
+
+### Revisit when
+
+Users need to run benchmarks without PowerShell, or per-frame present statistics are needed routinely.
+
+## ADR-011 - App shell: tray-only, child processes for the picker and imports
+
+### Decision
+
+- `wallive` with no arguments is the tray app (`windows_subsystem = "windows"`). It uses one named mutex per session (`Local\Wallive.SingleInstance`). `wallive <video>` hands the path to the running instance through `WM_COPYDATA`, or starts with it; `wallive --quit` posts `WM_CLOSE`.
+- The tray icon is `Shell_NotifyIconW` with `NOTIFYICON_VERSION_4`, re-added on `TaskbarCreated`. The icon image is drawn at run time (`CreateIconIndirect`), so no resource compiler is needed (ADR-009). The menu has Choose video..., Pause, Pause on battery, Start with Windows (HKCU Run key) and Quit.
+- The file dialog runs in a `wallive --pick` child process that prints the chosen path. Imports run as a `wallive --import` child at below-normal priority with no window. Each child has one waiter thread (64 KB stack) blocked on it; the waiter posts the result to the host window. All children belong to a kill-on-close job object.
+- Settings live in `%APPDATA%\Wallive\config.txt` as `key=value` lines. Imports are cached in `%LOCALAPPDATA%\Wallive\cache\<fnv64 of path, size, mtime, target size>.mp4`, and only the current import is kept. The log is `%LOCALAPPDATA%\Wallive\wallive.log`; it is opened only after the single-instance check, keeps the previous run as `wallive.old.log`, and stops growing at 1 MB.
+
+### Context
+
+The resident process must stay small (PROJECT_BRIEF). `IFileOpenDialog` loads a large part of the shell (and shell extensions) into the calling process, and those DLLs stay loaded. The encoder MFTs and 4K frame buffers of an import peaked at 425 MB in the child during testing.
+
+### Alternatives considered
+
+- Dialog and import in-process: simpler, but they permanently raise the resident working set, and a crashing codec or shell extension would take the wallpaper down.
+- Registry for settings: no file to edit or back up by hand. A text file is transparent and roams with `%APPDATA%`.
+- Task Scheduler for autostart: needed only for elevated start; the Run key is enough.
+
+### Why this was selected
+
+It keeps the always-running process to the wallpaper, the tray and the event wiring. Heavy, rare work pays its cost in a process that exits.
+
+### Revisit when
+
+Startup of the picker child is noticeably slow, or several imports need to be queued.

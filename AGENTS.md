@@ -40,11 +40,11 @@ Update this section when the project direction or stack changes.
 - Cargo.toml
 - src/main.rs
 - src/desktop/ - WorkerW and Progman attach for both layouts
-- src/playback/ - Media Engine and DirectComposition
+- src/playback/ - Source Reader, video processor and DirectComposition (ADR-003)
 - src/transcode/ - decode capability probe and Media Foundation transcode
 - src/occlusion/ - WinEvent hooks and coverage math
 - src/power/ - power and session notifications plus EcoQoS
-- src/tray/
+- src/shell/ - tray, autostart, single instance, picker (ADR-011)
 - src/config/
 - tools/bench/
 - docs/
@@ -310,21 +310,24 @@ At the end of meaningful work:
 
 ### Current Phase
 
-Spikes. Desktop-attach spike done on the raised desktop (2026-09-26); playback spike next. See `logs/handoff.md` for the exact stopping point.
+Feature-complete tray app on the raised desktop (2026-09-26); verification on other setups and RAM reduction remain. See `logs/handoff.md` for the exact stopping point.
 
 ### Working Features
 
-- Project memory structure and AI operating instructions.
-- Rust crate with manifest embedding, lint gates for unsafe code, 17 unit tests.
-- Solid-colour wallpaper window behind the icons on the Windows 11 raised desktop, re-attached after Explorer restart and display change (event-driven, no timers).
+- Video behind the icons on every monitor, hardware decode, ~0.9% of the CPU for 1080p30 (ADR-003).
+- Import: HW decode probe + transcode to monitor resolution in a child process, cached.
+- Pause when covered, fullscreen app, display off, Battery / Energy Saver, lock / disconnect / remote, optional on battery (ADR-005).
+- Re-attach after Explorer restart and display change (ADR-008).
+- Tray menu, config, Start with Windows, single instance, file log (ADR-011); benchmark script (ADR-010).
 
 ### In Progress
 
-- Playback spike (Media Engine windowless swap chain + DComp in the attached window).
+- Nothing half-done in code.
 
-### Not Yet Implemented
+### Not Yet Implemented / Not Verified
 
-- Video playback, transcode/import, occlusion pause, power/session pause, tray, start with Windows, benchmark mode. Classic layout not verified on real hardware.
+- RAM target (30 MB; measured ~90-120 MB).
+- Classic layout / Windows 10, multi-monitor, exclusive-fullscreen games, saver toggles and battery power not verified on real hardware.
 
 ### Known Risks
 

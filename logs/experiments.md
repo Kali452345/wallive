@@ -141,3 +141,21 @@ Occlusion check cost: 9-51 checks per run, 1.5-4.5 ms average, 2.5-39 ms max (th
 - Paused really is ~0: the video thread sleeps on a kernel event, the UI thread only wakes for events.
 - The cost of watching is the out-of-context delivery of `EVENT_OBJECT_LOCATIONCHANGE`, which also fires for every cursor move: ~30 us per event, i.e. ~3% of one core (0.37% of the CPU) at a continuous 1000 Hz mouse, ~0.4% of one core at 125 Hz, 0 when the mouse is still. It is the only event that catches maximize / restore / snap / programmatic resizes, so it stays; recorded as ADR-005's "revisit when" data point.
 - Not verified: `QUNS_RUNNING_D3D_FULL_SCREEN` with a real exclusive-fullscreen game; Battery Saver / Energy Saver toggles and battery power (machine on AC; the notifications arrive, the mapping is unit-tested); session lock (cannot unlock unattended).
+
+## 2026-09-26 - App shell: tray, config, import integration
+
+### Result
+
+| Check | Result |
+|---|---|
+| `wallive <4K60 H.264, 6 s>` on first run | import child: 3840x2160@60 -> 1920x1080@30 in 12.8 s, child peak working set 425 MB; resident switched to the import and saved `config.txt` |
+| `wallive <720p30>` while running | `WM_COPYDATA` accepted; import child encoded 300 frames in 2.4 s, switch 2.5 s after the request (720p kept, never upscaled); switched; old cache file deleted |
+| `wallive` again (config present) | first frame 261 ms after launch, from the cache |
+| second `wallive` | exits with code 3; running instance's log untouched (after the fix below) |
+| tray menu (posted tray callback + real mouse clicks) | Pause -> `pause: paused by user`, persisted; Start with Windows writes / deletes the HKCU Run value |
+| `wallive --pick` | dialog "Choose a video for the wallpaper" shown; closing it ends the child with empty output |
+| tray app playing, 30 s (`bench.ps1 -Attach`) | 7.09% of one core = 0.886% of the CPU, 90.5 MB working set, 12 threads, GPU decode 3.6% + processing 9.2% (720p source scaled to 1080p) |
+
+Found and fixed: the log file was opened before the single-instance check, so a second launch renamed the running instance's log to `wallive.old.log`.
+
+Note: on this Windows 11 machine new tray icons land in the overflow (^) area; `Shell_NotifyIconGetRect` then reports the chevron's rect.

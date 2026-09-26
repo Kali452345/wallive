@@ -31,9 +31,16 @@ Tools: `tools/inspect-desktop.ps1 -Shot out.png` prints Progman's children in z-
 | Wallpaper/slideshow change keeps us above Explorer layer | Unit-tested only (`z_fix`) | n/a |
 | Icons hidden (View > Show desktop icons off) | Not tested | Not tested |
 
+## Playback, pause and app checks
+
+- Benchmark: `tools/bench.ps1` (`-Attach` for a running tray app). Results in `logs/experiments.md`.
+- Pause: `tools/pause-check.ps1` (maximized window, mouse storm, half-screen window, display off; `-SkipDisplayOff` when someone is at the machine).
+- App: `wallive <video>` (import + play), `wallive <video>` again while running (hand-off), `wallive` twice (second exits with code 3), `wallive --quit`. Check `%LOCALAPPDATA%\Wallive\wallive.log`.
+- Tray menu: right-click the icon (Windows 11 may hide it under ^). Scripted: post `WM_APP+3` with `WM_CONTEXTMENU` in LOWORD of lParam to `WalliveHost`, from a DPI-aware process (`logs/errors.md`).
+
 ## Last Known Good
 
 - Date: 2026-09-26
 - Commit: see `logs/handoff.md`
-- Commands run: `cargo build --release`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test` (17 passed)
-- Manual checks: raised-desktop attach, Explorer restart, synthetic display change (see `logs/experiments.md`)
+- Commands run: `cargo build --release`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test` (59 passed)
+- Manual checks: raised-desktop attach, Explorer restart, playback, pause policy, app shell flows (see `logs/experiments.md`)

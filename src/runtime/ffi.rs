@@ -5,6 +5,7 @@
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicIsize, AtomicU32, AtomicU64, Ordering};
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
@@ -20,9 +21,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MOVESIZEEND, GA_ROOT,
     GetAncestor, GetMessageW, IsWindow, KillTimer, MSG, OBJID_WINDOW, PBT_POWERSETTINGCHANGE,
     PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetTimer,
-    TranslateMessage, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP, WM_CLOSE, WM_DESTROY,
-    WM_DISPLAYCHANGE, WM_POWERBROADCAST, WM_TIMER, WM_WTSSESSION_CHANGE, WNDCLASSW,
-    WS_EX_TOOLWINDOW, WS_POPUP,
+    TranslateMessage, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP, WM_CLOSE,
+    WM_CONTEXTMENU, WM_COPYDATA, WM_DESTROY, WM_DISPLAYCHANGE, WM_POWERBROADCAST, WM_TIMER,
+    WM_WTSSESSION_CHANGE, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 use windows::core::{BOOL, PCWSTR, w};
 
@@ -45,7 +46,26 @@ pub enum Event {
     WindowsSettled,
     Power(crate::power::PowerChange),
     Session(crate::power::SessionChange),
+    /// The tray icon was clicked; show the menu at this screen point.
+    TrayMenu {
+        x: i32,
+        y: i32,
+    },
+    /// A background task (picker / import child process) finished.
+    TaskDone,
+    /// Another `wallive <video>` asked us to show a video.
+    OpenRequested,
 }
+
+/// Tray icon callback message.
+pub const WM_TRAY: u32 = WM_APP + 3;
+/// Posted by task threads when they have queued a result.
+const WM_TASK_DONE: u32 = WM_APP + 4;
+/// `WM_COPYDATA` tag for "open this video" (UTF-16 path, no terminator).
+pub const COPYDATA_OPEN: usize = 0x5741_4C4C; // "WALL"
+/// `NOTIFYICON_VERSION_4` click notifications (`NIN_SELECT`, `NIN_KEYSELECT`).
+const NIN_SELECT: u32 = 0x400;
+const NIN_KEYSELECT: u32 = 0x401;
 
 /// Debounce for window events. Long enough that dragging a window or a
 /// burst of show / hide / focus events causes one check, short enough that
@@ -66,6 +86,26 @@ static WINDOW_EVENTS_USED: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     static QUEUE: RefCell<VecDeque<Event>> = const { RefCell::new(VecDeque::new()) };
+    static OPEN_REQUESTS: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Paths received through `WM_COPYDATA` since the last call.
+pub fn take_open_requests() -> Vec<PathBuf> {
+    OPEN_REQUESTS.with_borrow_mut(std::mem::take)
+}
+
+/// Tells the UI thread that a task result is waiting. Callable from any
+/// thread; `host` is the host window handle as an integer.
+pub fn post_task_done(host: isize) {
+    // SAFETY: posting to our own window; fails cleanly if it is gone.
+    unsafe {
+        let _ = PostMessageW(
+            Some(HWND(host as *mut _)),
+            WM_TASK_DONE,
+            WPARAM(0),
+            LPARAM(0),
+        );
+    }
 }
 
 /// Queues an event once; repeated events of the same kind coalesce until the
@@ -131,6 +171,40 @@ unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 push(Event::Session(change));
             }
         }
+        WM_TRAY => {
+            // Version 4: event in LOWORD(lParam), anchor point in wParam.
+            let event = (lp.0 as u32) & 0xffff;
+            if event == WM_CONTEXTMENU || event == NIN_SELECT || event == NIN_KEYSELECT {
+                push(Event::TrayMenu {
+                    x: i32::from(wp.0 as u16 as i16),
+                    y: i32::from((wp.0 >> 16) as u16 as i16),
+                });
+            }
+            return LRESULT(0);
+        }
+        WM_TASK_DONE => push(Event::TaskDone),
+        WM_COPYDATA => {
+            let data = lp.0 as *const windows::Win32::System::DataExchange::COPYDATASTRUCT;
+            // SAFETY: for WM_COPYDATA, lParam points at a COPYDATASTRUCT whose
+            // buffer (cbData bytes) is valid while the message is handled.
+            let path = unsafe {
+                data.as_ref().and_then(|d| {
+                    (d.dwData == COPYDATA_OPEN && !d.lpData.is_null()).then(|| {
+                        let units = std::slice::from_raw_parts(
+                            d.lpData.cast::<u16>(),
+                            d.cbData as usize / 2,
+                        );
+                        PathBuf::from(String::from_utf16_lossy(units))
+                    })
+                })
+            };
+            if let Some(path) = path {
+                OPEN_REQUESTS.with_borrow_mut(|r| r.push(path));
+                push(Event::OpenRequested);
+                return LRESULT(1);
+            }
+            return LRESULT(0);
+        }
         crate::playback::WM_MEDIA_EVENT => push(Event::Media {
             event: wp.0 as u32,
             param: lp.0 as usize,
@@ -161,6 +235,14 @@ pub struct Host(HWND);
 impl Host {
     pub fn hwnd(&self) -> HWND {
         self.0
+    }
+
+    /// Ends the message loop cleanly (as `WM_CLOSE` from outside would).
+    pub fn close(&self) {
+        // SAFETY: posting to our own window.
+        unsafe {
+            let _ = PostMessageW(Some(self.0), WM_CLOSE, WPARAM(0), LPARAM(0));
+        }
     }
 
     pub fn create() -> windows::core::Result<Self> {
