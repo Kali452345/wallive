@@ -1,0 +1,46 @@
+name: Problem report
+description: Something does not work, looks wrong, or costs too much CPU / memory.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead. Screenshots help for display problems.
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Run `winver`, e.g. "Windows 11 24H2 (26100.2033)" or "Windows 10 22H2".
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: Graphics
+      description: Task Manager > Performance > GPU, e.g. "NVIDIA RTX 3060 + Intel UHD 770".
+    validations:
+      required: true
+  - type: textarea
+    id: monitors
+    attributes:
+      label: Monitors
+      description: For each monitor, resolution, refresh rate and scaling (Settings > Display), and how they are arranged.
+      placeholder: |
+        1: 3840x2160, 60 Hz, 150%, main
+        2: 1920x1080, 144 Hz, 100%, left of 1
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Quit Wallive, then attach or paste `%LOCALAPPDATA%\Wallive\wallive.log` (and `wallive.old.log` if the problem was in the previous run). It contains the paths of your videos; remove anything you don't want to share.
+      render: text
+  - type: input
+    id: video
+    attributes:
+      label: Video (for import or playback problems)
+      description: Format if known (e.g. "YouTube download, 4K VP9", "phone video, HEVC"), or a link.

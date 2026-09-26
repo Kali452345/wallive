@@ -1,0 +1,57 @@
+name: Test report
+description: You tried Wallive on a setup marked "not tested" in the README (e.g. several monitors, 4K, Windows 10, NVIDIA / AMD). Reports that everything works are useful too.
+labels: [test-report]
+body:
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Everything I tried works
+        - Some things work, some don't
+        - Does not work
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Run `winver`.
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: Graphics
+      description: Task Manager > Performance > GPU.
+    validations:
+      required: true
+  - type: textarea
+    id: monitors
+    attributes:
+      label: Monitors
+      description: For each monitor, resolution, refresh rate and scaling, and how they are arranged.
+    validations:
+      required: true
+  - type: checkboxes
+    id: tried
+    attributes:
+      label: What you tried
+      options:
+        - label: Video shows behind the icons on every monitor
+        - label: Icons, taskbar and windows stay on top
+        - label: Explorer restart (Task Manager > Windows Explorer > Restart) - video comes back
+        - label: Adding / removing a monitor or changing resolution while running
+        - label: Maximized window on every monitor pauses it (tray tooltip says "paused")
+        - label: Fullscreen game pauses it
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything that looked wrong, and CPU / memory in Task Manager while playing if you checked.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Quit Wallive, then attach or paste `%LOCALAPPDATA%\Wallive\wallive.log`.
+      render: text
