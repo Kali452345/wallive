@@ -91,6 +91,9 @@ impl Player {
     }
 
     pub fn open(&mut self, path: &Path) {
+        // Stop first: stopping saves the old video's position, which must
+        // not carry over to the new one.
+        self.stop_worker();
         self.video = Some(path.to_path_buf());
         self.position = 0;
         self.restart();
@@ -244,14 +247,46 @@ impl Job {
         }
     }
 
-    /// Decode/present loop. Returns on STOP or error. All MF objects are
-    /// local, so they are released before `MfThread` shuts MF down.
+    /// Runs until STOP or an error. A long pause releases the decoder and
+    /// its surfaces (the last frame stays on screen); resuming reopens the
+    /// video where it stopped.
     fn play(&self) -> windows::core::Result<()> {
+        let mut announced = false;
+        loop {
+            if self.decode(&mut announced)? == Exit::Stop {
+                return Ok(());
+            }
+            ffi::trim(&self.device);
+            crate::log!("playback: paused for a while, decoder released");
+            loop {
+                match self.control.state.load(Ordering::Acquire) {
+                    STOP => return Ok(()),
+                    PAUSE => self.control.signal.wait(),
+                    _ => break,
+                }
+            }
+        }
+    }
+
+    /// Decode/present loop from the saved position. Returns on STOP, on a
+    /// pause longer than [`RELEASE_AFTER_MS`], or on error. All MF objects
+    /// are local, so they are released on return.
+    fn decode(&self, announced: &mut bool) -> windows::core::Result<Exit> {
         let reader = ffi::Reader::open(&self.video, &self.device)?;
         let info = reader.info()?;
+        // Seeking lands on the key frame before `start` (at most one second
+        // back in imports). Decoding the frames up to `start` without showing
+        // them was tried: the burst made the decoder grow its surface pool
+        // to ~95 MB more, for good (logs/experiments.md).
         let start = self.control.position.load(Ordering::Acquire);
-        if start > 0 {
-            reader.seek(start)?;
+        // A resume position past the end (e.g. the file was replaced) starts
+        // from the beginning instead of failing.
+        if start > 0 && reader.seek(start).is_err() {
+            crate::log!(
+                "playback: cannot resume at {} ms, starting over",
+                start / 10_000
+            );
+            reader.seek(0)?;
         }
         let out = self.chain.size();
         let crop = crop_rect((info.width, info.height), out);
@@ -271,16 +306,19 @@ impl Job {
             cadence.per_frame
         );
 
-        let mut announced = false;
         let mut frames_since_rewind = 0u64;
         let mut rate = RateLog::default();
         loop {
             match self.control.state.load(Ordering::Acquire) {
-                STOP => return Ok(()),
+                STOP => return Ok(Exit::Stop),
                 // A thread started while paused still shows one frame, so a
                 // re-attach during a pause does not leave the wallpaper empty.
-                PAUSE if announced => {
-                    self.control.signal.wait();
+                PAUSE if *announced => {
+                    if !self.control.signal.wait_for(RELEASE_AFTER_MS)
+                        && self.control.state.load(Ordering::Acquire) == PAUSE
+                    {
+                        return Ok(Exit::Paused);
+                    }
                     rate = RateLog {
                         reports: rate.reports,
                         ..RateLog::default()
@@ -313,14 +351,27 @@ impl Job {
             processor.blit(&sample)?;
             // A control wake-up is handled at the top of the loop.
             self.chain.present(refreshes, &self.control.signal)?;
-            if !announced {
-                announced = true;
+            if !*announced {
+                *announced = true;
                 ffi::post(self.host, MEDIA_PLAYING, 0);
             }
             rate.frame();
         }
     }
 }
+
+/// How a decode loop ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Exit {
+    Stop,
+    /// Paused longer than [`RELEASE_AFTER_MS`].
+    Paused,
+}
+
+/// A pause this long releases the decoder (~45 MB of surfaces at 1080p on
+/// the owner's iGPU). Shorter pauses (Win+D, a quick look at another window)
+/// resume instantly; after it, resuming takes one reader open (~0.2 s).
+const RELEASE_AFTER_MS: u32 = 10_000;
 
 /// Logs the achieved frame rate a few times after start, as a cheap check
 /// that pacing works on this machine.

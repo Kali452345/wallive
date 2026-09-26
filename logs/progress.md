@@ -120,3 +120,21 @@ Read `logs/handoff.md`. Start the playback spike in the attached surface window.
 
 - RAM (~90-120 MB vs the 30 MB target).
 - Unverified: Windows 10 / classic layout, multi-monitor, exclusive-fullscreen game, saver toggles, battery, session lock.
+
+## 2026-09-26 - Owner-reported fixes: video switch, DASH MP4, disk reads, RAM
+
+### Changed
+
+- `src/playback/mod.rs`: switching videos no longer inherits the old position; a failed resume seek starts over; after 10 s of pause the decoder is released (and the device flushed / trimmed), reopened on resume.
+- `src/playback/ffi.rs`: buffered shell file stream instead of MF's file stream; `MF_LOW_LATENCY`; `trim()`; `Signal::wait_for`.
+- `src/transcode/`: first frame read before the encoder exists; fragmented-MP4 edit-list workaround (`mp4.rs`, 4 tests); encoder asked for no B-frames and a 1 s key frame interval.
+- `Cargo.toml`: `Win32_System_Ole` (VARIANT type only).
+
+### Verification
+
+- build / clippy / fmt / 63 tests pass.
+- Real tray app: Red Eye switch plays; `videoplayback.mp4` imports (986 frames) and plays; SSD reads while playing ~0 (was ~1.1 MB/s); private 81 MB playing (was 108), 29 MB after 10 s paused, 81 MB resumed; CPU not worse in a same-conditions A/B (`logs/experiments.md`).
+
+### Remaining
+
+- RAM while playing is still 81 MB private (62.6 MB of it GPU surfaces). Next candidates: NV12 composition swap chain (~10 MB), decoder pool size.

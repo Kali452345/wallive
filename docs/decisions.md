@@ -83,6 +83,13 @@ Measured ~6% of a core (~0.8% of the CPU) at 1080p30, 30.0 fps, seamless loop - 
 
 Whether MPO / overlay planes are used for the swap chain under Progman / WorkerW (PresentMon shows the present mode).
 
+### Update 2026-09-26: reading, decoder memory, long pauses
+
+- The reader opens the file through `SHCreateStreamOnFileEx` + `MFCreateMFByteStreamOnStream` (content type `video/mp4`). Media Foundation's own file stream (URL or `MFCreateFile`) read the SSD on every loop; the shell stream is buffered, so loops come from the system file cache. Loading the file into process memory was rejected (~1 MB private RAM per second of video).
+- `MF_LOW_LATENCY` on the reader: ~21 MB fewer decoder surfaces at 1080p. Safe because imports have no B-frames (ADR-004 update).
+- After 10 s of pause the video thread drops reader and video processor, then `ClearState` / `Flush` / `IDXGIDevice3::Trim` (D3D11 frees released resources only on flush). Private memory 81 -> 29 MB while paused. Resume reopens at the key frame before the saved position (one timed wait, no polling). Decoding the frames up to the exact position without showing them was rejected: the burst grew the decoder's surface pool by ~95 MB for good.
+- Numbers: `logs/experiments.md` (2026-09-26, owner-reported issues).
+
 ## ADR-004 - Output codec: H.264 by default, chosen by hardware probe
 
 ### Decision
@@ -114,6 +121,11 @@ It works everywhere with zero bundled codecs, and decode is always hardware-acce
 ### Revisit when
 
 Benchmarks show HEVC/AV1 decode is measurably cheaper at equal quality on common hardware.
+
+### Update 2026-09-26: encoder settings, fragmented MP4
+
+- Encoder: no B-frames (`CODECAPI_AVEncMPVDefaultBPictureCount = 0`, needed by low-latency playback) and a key frame every second (`CODECAPI_AVEncMPVGOPSize`, bounds the jump back when a released decoder resumes). Best effort, logged if rejected.
+- Fragmented MP4 (DASH, e.g. YouTube downloads) with an edit list: Media Foundation's MP4 source reads zero frames from it. When the first read yields no frame and the file is such an MP4, the import retries from a temporary copy with the `edts` boxes renamed to `free` (`src/transcode/mp4.rs`); the user's file is never modified. The timing shift the edit list described is irrelevant because import re-times every frame from zero.
 
 ## ADR-005 - Pause detection: event-driven coverage check
 

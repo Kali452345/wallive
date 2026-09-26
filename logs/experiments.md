@@ -159,3 +159,62 @@ Occlusion check cost: 9-51 checks per run, 1.5-4.5 ms average, 2.5-39 ms max (th
 Found and fixed: the log file was opened before the single-instance check, so a second launch renamed the running instance's log to `wallive.old.log`.
 
 Note: on this Windows 11 machine new tray icons land in the overflow (^) area; `Shell_NotifyIconGetRect` then reports the chevron's rect.
+
+## 2026-09-26 - Owner-reported issues: video switch, DASH MP4, disk reads, RAM
+
+Machine on battery for all runs below (Win11 26200, Intel iGPU, 1920x1080 @ 60.05 Hz). Content: the owner's "Anime Red Eye" wallpaper, imported to 1920x1080 @ 30, H.264 High L4.0, 1 reference frame, ~8 Mbit/s.
+
+### Disk reads while playing
+
+A/B, 15 s samples, wallive playing vs quit, three rounds each:
+
+| Reader | `\PhysicalDisk(_Total)\Disk Read Bytes/sec` playing | stopped | wallive `IO Read Bytes/sec` |
+|---|---|---|---|
+| `MFCreateSourceReaderFromURL` (before) | 0.96 / 2.43 / 1.21 MB/s | 0 / 1.33 (other process) / 0.01 MB/s | 1.16 MB/s |
+| `MFCreateFile(MF_FILEFLAGS_NONE)` byte stream | 1.24 / 2.04 / 1.13 MB/s | 0.07 / 0.04 / 0 MB/s | 1.13-1.20 MB/s |
+| `SHCreateStreamOnFileEx` + `MFCreateMFByteStreamOnStream` (now) | **0.004 / 0 / 0.002 MB/s** | 0 / 0.01 / 0.004 MB/s | 1.13-1.21 MB/s |
+
+Media Foundation's file stream read the SSD on every loop although 7 GB were free (physical reads matched wallive's reads byte for byte). A shell file stream is buffered: after the first loop the reads come from the system file cache, which is not charged to wallive and which Windows can drop under memory pressure. Loading the file into process memory was rejected: ~1 MB of private RAM per second of video.
+
+### RAM
+
+Where it goes (tray app, playing): private working set 88 MB of which GPU `Local Usage` 87 MB (on the iGPU, video memory is system RAM charged to the process). Swap chain 2 x 8 MB; the rest is the decoder's surface pool. Shared DLL pages (Intel driver 105 MB image size) are not private.
+
+`wallive --play`, 8 s after start:
+
+| Setting | GPU local | Private | Working set |
+|---|---|---|---|
+| baseline | 83.9 MB | 107.8 MB | 118.9 MB |
+| `MF_LOW_LATENCY` on the reader | **62.6 MB** | **80.7 MB** | **92.2 MB** |
+| `MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT(_PROGRESSIVE)` = 1 on the decoder | 83.9 MB | 105.4 MB | 116.9 MB (no effect) |
+| both | 62.7 MB | 81.0 MB | 92.5 MB |
+
+Decoder release after a 10 s pause (tray app, maximized window over the desktop):
+
+| State | GPU local | Private | Working set | CPU (one core) |
+|---|---|---|---|---|
+| playing | 62.6 MB | 81.0 MB | 92.6 MB | ~10% (3 s sample) |
+| paused 4-7 s (decoder kept) | 62.7 MB | 81.5 MB | 92.9 MB | 0.52% |
+| paused > 10 s, release without flush | 59.7 MB | 58.2 MB | 80.9 MB | 0% |
+| paused > 10 s, release + `ClearState`/`Flush`/`IDXGIDevice3::Trim` | **31.1 MB** | **29.2 MB** | **52.0 MB** | 0% |
+| resumed (reopen at the previous key frame) | 62.6 MB | 81.6 MB | 92.9 MB | ~10% |
+| resumed, frames up to the old position decoded unshown | 157.6 MB | 176.0 MB | 187.5 MB | - (rejected) |
+
+The unshown-frame burst made the decoder grow its surface pool for good (stable at 157.6 MB over two cycles, not a leak). The same growth explains `--bench-decode` showing 163 MB. Resume reopen takes ~33 ms with the file cached; the first new frame follows at 30 fps.
+
+### CPU A/B (same file, battery, `--play`, 30 s after 6 s warm-up)
+
+| Reader | Low latency | CPU (one core) | GPU local | Private |
+|---|---|---|---|---|
+| shell stream (now) | on | 10.98% / 11.77% | 62.7 MB | 81.5 MB |
+| URL | on | 11.56% | 62.6 MB | 81.5 MB |
+| shell stream | off | 22.86% (single run, outlier not investigated) | 87.1 MB | 111.2 MB |
+| URL (before) | off | 12.81% | 87.1 MB | 109.0 MB |
+
+The changes do not cost CPU. Absolute numbers are higher than the earlier 6.4% (AC power, synthetic clip): battery clocks and real content.
+
+`tools/bench.ps1 -Attach` 60 s, tray app, battery: cpu1 9.75%, cpuAll 1.219%, WS 92.9 MB, private 81.5 MB, 10 threads, GPU decode 7.6% + processing 8.8%, system discharge 11.7 W.
+
+### Import encoder
+
+`CODECAPI_AVEncMPVDefaultBPictureCount = 0` and `CODECAPI_AVEncMPVGOPSize = fps` accepted by this machine's encoder: key frames every 30 frames (was 128), no `ctts` box (no B-frames, as before).

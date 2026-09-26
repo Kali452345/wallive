@@ -206,6 +206,147 @@ Scratch test scripts for the tray menu.
 
 RESOLVED (workarounds in test scripts only)
 
+## Switching videos failed with 0xC00D36E5
+
+### Date
+
+2026-09-26 (reported by the owner)
+
+### Area
+
+`src/playback/mod.rs` (`Player::open`).
+
+### Symptoms
+
+After choosing "Anime Red Eye" (11 s) while a longer video played, the import finished but the wallpaper stopped: `playback: ...: The operation on the current offset is not permitted. (0xC00D36E5)`. Videos chosen after a longer one also started mid-way.
+
+### Root Cause
+
+`open` set the start position to 0 and then called `restart`, which stops the old video thread and stores *its* position as the start position. The new video was sought to the old video's position; past its end, `SetCurrentPosition` fails.
+
+### Working Fix
+
+Stop the old thread before resetting the position. A resume seek that fails now starts from 0 instead of stopping playback.
+
+### Verification
+
+Real tray app: a 33 s video played for 26 s, then `wallive <Red Eye>`: import, switch, 30 fps.
+
+### Related Files
+
+- `src/playback/mod.rs`
+
+### Status
+
+RESOLVED
+
+## Fragmented MP4 (YouTube / DASH) imported zero frames
+
+### Date
+
+2026-09-26
+
+### Area
+
+`src/transcode/`.
+
+### Symptoms
+
+`videoplayback.mp4` (1080x1920 H.264, DASH fragmented): `fatal: The operation failed because no samples were processed by the sink. (0xC00D4A44)`. `--bench-decode` on the source: 0 frames.
+
+### Root Cause
+
+Media Foundation's MP4 source reads no frames from a fragmented MP4 whose track has an edit list (`edts`/`elst`, here media time 512). Renaming only `sidx` or the `dash` brand did not help; renaming `edts` to `free` gave all 986 frames. The misleading sink error came from finalizing a writer that got no samples.
+
+### Working Fix
+
+Import reads the first frame before creating the encoder. No frame + fragmented MP4 with edit lists: retry from a temporary copy with `edts` renamed to `free` (`src/transcode/mp4.rs`, 4 tests). No frame otherwise: "source has no decodable video frames".
+
+### Verification
+
+Real tray app: `wallive videoplayback.mp4` imported 986 frames in 7.2 s and played at 30 fps; the temporary copy is deleted.
+
+### Related Files
+
+- `src/transcode/mod.rs`
+- `src/transcode/mp4.rs`
+
+### Status
+
+RESOLVED
+
+## Playback read the SSD on every loop
+
+### Date
+
+2026-09-26 (noticed by the owner)
+
+### Area
+
+`src/playback/ffi.rs` (`Reader::open`).
+
+### Symptoms
+
+Constant disk activity (~1.1 MB/s) while playing a cached 11 MB video, with 7 GB of RAM free.
+
+### Root Cause
+
+Media Foundation's file byte stream (by URL, and also `MFCreateFile` with `MF_FILEFLAGS_NONE`) did not use the system file cache: physical reads matched the process's reads.
+
+### Failed Attempts
+
+- `MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_NONE)`: unchanged.
+
+### Working Fix
+
+`SHCreateStreamOnFileEx` + `MFCreateMFByteStreamOnStream`, content type `video/mp4`. Physical reads while playing: ~0.
+
+### Verification
+
+A/B in `logs/experiments.md`.
+
+### Related Files
+
+- `src/playback/ffi.rs`
+
+### Status
+
+RESOLVED
+
+## Decoder surface pool grows after a decode burst
+
+### Date
+
+2026-09-26
+
+### Area
+
+`src/playback/mod.rs` (resume after the decoder was released).
+
+### Symptoms
+
+After a long pause the reopened decoder used 157.6 MB of GPU memory instead of 62.7 MB.
+
+### Root Cause
+
+Resume decoded the frames between the key frame and the saved position as fast as possible without showing them; the decoder grew its surface pool to keep up and never shrank it. Separately, released D3D11 resources were not freed until the context was flushed.
+
+### Working Fix
+
+Resume at the key frame (imports now have one every second), no burst. `ClearState` + `Flush` + `IDXGIDevice3::Trim` after releasing.
+
+### Verification
+
+Two pause cycles: paused 29 MB private, resumed 81 MB (same as a fresh start).
+
+### Related Files
+
+- `src/playback/mod.rs`, `src/playback/ffi.rs`
+
+### Status
+
+RESOLVED
+
 ## Template
 
 ### Date

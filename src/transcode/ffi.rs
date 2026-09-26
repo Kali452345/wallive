@@ -5,12 +5,14 @@
 //! resident wallpaper process.
 #![allow(unsafe_code)]
 
+use std::mem::ManuallyDrop;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_DECODER_PROFILE_AV1_VLD_PROFILE0, D3D11_DECODER_PROFILE_H264_VLD_NOFGT,
     D3D11_DECODER_PROFILE_HEVC_VLD_MAIN, ID3D11Device, ID3D11VideoDevice,
 };
 use windows::Win32::Media::MediaFoundation::{
-    IMFAttributes, IMFMediaType, IMFSample, IMFSinkWriter, IMFSourceReader, MF_MT_AVG_BITRATE,
+    CODECAPI_AVEncMPVDefaultBPictureCount, CODECAPI_AVEncMPVGOPSize, ICodecAPI, IMFAttributes,
+    IMFMediaType, IMFSample, IMFSinkWriter, IMFSourceReader, MF_MT_AVG_BITRATE,
     MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
     MF_MT_MAJOR_TYPE, MF_MT_MPEG2_PROFILE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
     MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, MF_SOURCE_READER_ALL_STREAMS,
@@ -21,7 +23,9 @@ use windows::Win32::Media::MediaFoundation::{
     MFVideoFormat_NV12, MFVideoInterlace_Progressive, eAVEncH264VProfile_High,
 };
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
-use windows::core::{HSTRING, Interface, Result};
+
+use windows::Win32::System::Variant::{VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_UI4};
+use windows::core::{GUID, HSTRING, Interface, Result};
 
 /// COM (MTA) + Media Foundation for the import process.
 pub struct Platform(());
@@ -107,9 +111,25 @@ impl Encoder {
             input.SetUINT32(&MF_MT_DEFAULT_STRIDE, format.width)?;
             let stream = writer.AddStream(&out)?;
             writer.SetInputMediaType(stream, &input, None)?;
-            writer.BeginWriting()?;
             stream
         };
+        // Best effort; the encoders tried so far accept both.
+        // - No B-frames: playback decodes in low-latency mode, which assumes
+        //   frames arrive in display order.
+        // - A key frame every second: resuming after the decoder was released
+        //   during a long pause restarts at most one second back (the
+        //   default here was 128 frames).
+        let gop = format.fps.0.div_ceil(format.fps.1.max(1)).max(1);
+        for (api, value, what) in [
+            (&CODECAPI_AVEncMPVDefaultBPictureCount, 0, "B-frames off"),
+            (&CODECAPI_AVEncMPVGOPSize, gop, "key frame interval"),
+        ] {
+            if let Err(e) = set_codec_value(&writer, stream, api, value) {
+                crate::log!("import: encoder rejected {what}: {e}");
+            }
+        }
+        // SAFETY: stream and input type are set; starts the writer.
+        unsafe { writer.BeginWriting()? };
         Ok(Self { writer, stream })
     }
 
@@ -149,6 +169,34 @@ impl Encoder {
     pub fn finish(self) -> Result<()> {
         // SAFETY: flushes and closes the file; no further writes follow.
         unsafe { self.writer.Finalize() }
+    }
+}
+
+/// Sets one `ICodecAPI` value (VT_UI4) on the stream's encoder.
+fn set_codec_value(writer: &IMFSinkWriter, stream: u32, api: &GUID, value: u32) -> Result<()> {
+    let mut codec: Option<ICodecAPI> = None;
+    let value = VARIANT {
+        Anonymous: VARIANT_0 {
+            Anonymous: ManuallyDrop::new(VARIANT_0_0 {
+                vt: VT_UI4,
+                wReserved1: 0,
+                wReserved2: 0,
+                wReserved3: 0,
+                Anonymous: VARIANT_0_0_0 { ulVal: value },
+            }),
+        },
+    };
+    // SAFETY: `codec` is a valid out-pointer for an ICodecAPI of the
+    // stream's encoder; a VT_UI4 VARIANT owns no memory.
+    unsafe {
+        writer.GetServiceForStream(
+            stream,
+            &GUID::zeroed(),
+            &ICodecAPI::IID,
+            &mut codec as *mut _ as *mut *mut std::ffi::c_void,
+        )?;
+        let codec = codec.ok_or_else(windows::core::Error::empty)?;
+        codec.SetValue(api, &value)
     }
 }
 

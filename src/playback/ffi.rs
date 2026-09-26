@@ -51,26 +51,32 @@ use windows::Win32::Graphics::Dxgi::Common::{
 use windows::Win32::Graphics::Dxgi::{
     DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1,
     DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-    DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIAdapter, IDXGIDevice, IDXGIFactory2, IDXGISwapChain2,
+    DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIAdapter, IDXGIDevice, IDXGIDevice3, IDXGIFactory2,
+    IDXGISwapChain2,
 };
 use windows::Win32::Media::MediaFoundation::{
-    IMFDXGIBuffer, IMFDXGIDeviceManager, IMFSample, IMFSourceReader, MF_MT_FRAME_RATE,
-    MF_MT_FRAME_SIZE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS,
+    IMFAttributes, IMFDXGIBuffer, IMFDXGIDeviceManager, IMFSample, IMFSourceReader,
+    MF_BYTESTREAM_CONTENT_TYPE, MF_LOW_LATENCY, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
+    MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS,
     MF_SOURCE_READER_ALL_STREAMS, MF_SOURCE_READER_D3D_MANAGER,
     MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_SOURCE_READERF_ENDOFSTREAM, MF_VERSION,
-    MFCreateAttributes, MFCreateDXGIDeviceManager, MFCreateMediaType, MFCreateSourceReaderFromURL,
-    MFMediaType_Video, MFSTARTUP_LITE, MFShutdown, MFStartup, MFVideoFormat_NV12,
+    MFCreateAttributes, MFCreateDXGIDeviceManager, MFCreateMFByteStreamOnStream, MFCreateMediaType,
+    MFCreateSourceReaderFromByteStream, MFMediaType_Video, MFSTARTUP_LITE, MFShutdown, MFStartup,
+    MFVideoFormat_NV12,
 };
 use windows::Win32::System::Com::StructuredStorage::{
     PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
 };
-use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
+use windows::Win32::System::Com::{
+    COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize, STGM_READ, STGM_SHARE_DENY_WRITE,
+};
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows::Win32::System::Threading::{
     CreateEventW, GetCurrentProcess, GetProcessTimes, INFINITE, SetEvent, WaitForMultipleObjects,
     WaitForSingleObject,
 };
 use windows::Win32::System::Variant::VT_I8;
+use windows::Win32::UI::Shell::SHCreateStreamOnFileEx;
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 use windows::core::{GUID, HSTRING, IUnknown, Interface, Result, s, w};
 use windows_numerics::Matrix3x2;
@@ -192,6 +198,23 @@ pub fn process_cpu_ms() -> f64 {
     (ticks(kernel) + ticks(user)) as f64 / 10_000.0
 }
 
+/// Frees GPU memory of released resources now: D3D11 destroys objects only
+/// when the context is flushed, and `Trim` returns the driver's internal
+/// allocations (meant for apps going idle).
+pub fn trim(device: &ID3D11Device) {
+    // SAFETY: immediate-context calls on the video thread, the only thread
+    // using the context; no resources are bound afterwards.
+    unsafe {
+        if let Ok(context) = device.GetImmediateContext() {
+            context.ClearState();
+            context.Flush();
+        }
+        if let Ok(dxgi) = device.cast::<IDXGIDevice3>() {
+            dxgi.Trim();
+        }
+    }
+}
+
 /// Auto-reset kernel event used to wake the video thread.
 pub struct Signal(HANDLE);
 
@@ -220,6 +243,12 @@ impl Signal {
         unsafe {
             WaitForSingleObject(self.0, INFINITE);
         }
+    }
+
+    /// Blocks until the event is set (`true`) or `ms` pass (`false`).
+    pub fn wait_for(&self, ms: u32) -> bool {
+        // SAFETY: the handle is a live event owned by `self`.
+        unsafe { WaitForSingleObject(self.0, ms) == WAIT_OBJECT_0 }
     }
 }
 
@@ -420,7 +449,26 @@ impl Reader {
         unsafe {
             attrs.SetUnknown(&MF_SOURCE_READER_D3D_MANAGER, &manager)?;
             attrs.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1)?;
-            let reader = MFCreateSourceReaderFromURL(&HSTRING::from(path.as_os_str()), &attrs)?;
+            // Low-latency decoding hands each frame out as soon as it is
+            // decoded; the decoder then keeps ~21 MB fewer 1080p surfaces
+            // (logs/experiments.md). The cache files have no B-frames to
+            // reorder, so output order is unchanged.
+            attrs.SetUINT32(&MF_LOW_LATENCY, 1)?;
+            // A plain buffered file stream: from the second loop on, reads
+            // come from the system file cache. Media Foundation's own file
+            // stream (by URL or `MFCreateFile`) read the disk on every loop.
+            let stream = SHCreateStreamOnFileEx(
+                &HSTRING::from(path.as_os_str()),
+                (STGM_READ | STGM_SHARE_DENY_WRITE).0,
+                0,
+                false,
+                None,
+            )?;
+            let file = MFCreateMFByteStreamOnStream(&stream)?;
+            // No file name to guess the container from; cache files are MP4.
+            file.cast::<IMFAttributes>()?
+                .SetString(&MF_BYTESTREAM_CONTENT_TYPE, w!("video/mp4"))?;
+            let reader = MFCreateSourceReaderFromByteStream(&file, &attrs)?;
             reader.SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS.0 as u32, false)?;
             reader.SetStreamSelection(FIRST_VIDEO, true)?;
             let t = MFCreateMediaType()?;

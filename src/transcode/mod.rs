@@ -6,10 +6,13 @@
 //! DLLs and buffers never live in the resident wallpaper process.
 
 mod ffi;
+mod mp4;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ffi::{Decoder, Encoder, VideoFormat};
+use windows::Win32::Foundation::E_FAIL;
+use windows::Win32::Media::MediaFoundation::IMFSample;
 
 pub const DEFAULT_FPS_CAP: u32 = 30;
 
@@ -55,35 +58,72 @@ pub fn import(src: &Path, dst: &Path, monitor: (u32, u32)) -> windows::core::Res
         }
     }
 
+    // Held until the import ends; deletes the patched copy, if any.
+    let mut _copy = None;
+    let (decoder, out, first) = match open_source(src, monitor)? {
+        (decoder, out, Some(first)) => (decoder, out, first),
+        (_, _, None) => {
+            let path = dst.with_extension("src.mp4");
+            let patched = mp4::copy_without_fragment_edit_lists(src, &path)
+                .map_err(|e| windows::core::Error::new(E_FAIL, e.to_string()))?;
+            if !patched {
+                return Err(no_frames());
+            }
+            crate::log!("import: no frames; fragmented MP4 with an edit list, retrying without it");
+            let copy = _copy.insert(TempFile(path));
+            match open_source(&copy.0, monitor)? {
+                (decoder, out, Some(first)) => (decoder, out, first),
+                (_, _, None) => return Err(no_frames()),
+            }
+        }
+    };
+
+    let tmp = dst.with_extension("part.mp4");
+    let mut encoder = Encoder::create(&tmp, out, bitrate(out))?;
+    let duration = frame_duration_hns(out.fps);
+    let start = first.1;
+    let mut frames = 0u64;
+    let mut next = Some(first);
+    while let Some((sample, time)) = next {
+        encoder.write_sample(&sample, time - start, duration)?;
+        frames += 1;
+        next = decoder.next()?;
+    }
+    encoder.finish()?;
+    std::fs::rename(&tmp, dst).map_err(|e| windows::core::Error::new(E_FAIL, e.to_string()))?;
+    crate::log!("import: wrote {frames} frames to {}", dst.display());
+    Ok(out)
+}
+
+/// A decoded frame and its timestamp (100 ns).
+type Frame = (IMFSample, i64);
+
+/// Opens `src` with NV12 output planned for `monitor` and reads the first
+/// frame (`None` if the source yields no frames at all).
+fn open_source(
+    src: &Path,
+    monitor: (u32, u32),
+) -> windows::core::Result<(Decoder, VideoFormat, Option<Frame>)> {
     let decoder = Decoder::open(src)?;
     let native = decoder.native_format()?;
     let out = plan(native, monitor, DEFAULT_FPS_CAP);
     crate::log!("import: {native:?} -> {out:?}, {} bit/s", bitrate(out));
     decoder.set_output(out)?;
+    let first = decoder.next()?;
+    Ok((decoder, out, first))
+}
 
-    let tmp = dst.with_extension("part.mp4");
-    let mut encoder = Encoder::create(&tmp, out, bitrate(out))?;
-    let duration = frame_duration_hns(out.fps);
-    let mut first = None;
-    let mut frames = 0u64;
-    while let Some((sample, time)) = decoder.next()? {
-        let start = *first.get_or_insert(time);
-        encoder.write_sample(&sample, time - start, duration)?;
-        frames += 1;
+fn no_frames() -> windows::core::Error {
+    windows::core::Error::new(E_FAIL, "source has no decodable video frames")
+}
+
+/// Deletes the file when dropped.
+struct TempFile(PathBuf);
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
     }
-    encoder.finish()?;
-    if frames == 0 {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(windows::core::Error::new(
-            windows::Win32::Foundation::E_FAIL,
-            "source has no decodable video frames",
-        ));
-    }
-    std::fs::rename(&tmp, dst).map_err(|e| {
-        windows::core::Error::new(windows::Win32::Foundation::E_FAIL, e.to_string())
-    })?;
-    crate::log!("import: wrote {frames} frames to {}", dst.display());
-    Ok(out)
 }
 
 /// Writes a synthetic, seamlessly looping H.264 test clip: a scrolling colour
