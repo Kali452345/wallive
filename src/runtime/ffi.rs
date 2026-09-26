@@ -30,6 +30,8 @@ pub enum Event {
     DisplayChanged,
     /// Explorer created/destroyed/showed/hid/reordered a window.
     DesktopChanged,
+    /// Media Engine event posted from an MF worker thread.
+    Media { event: u32, param: usize },
 }
 
 const WM_WAKE: u32 = WM_APP + 1;
@@ -78,6 +80,10 @@ unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
     match msg {
         WM_DISPLAYCHANGE => push(Event::DisplayChanged),
         WM_WAKE => {}
+        crate::playback::WM_MEDIA_EVENT => push(Event::Media {
+            event: wp.0 as u32,
+            param: lp.0 as usize,
+        }),
         WM_CLOSE => {
             // SAFETY: destroying our own host window on its own thread.
             unsafe {
@@ -99,9 +105,13 @@ unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 
 /// Hidden top-level window. It must be top-level (not message-only) because
 /// `TaskbarCreated` and `WM_DISPLAYCHANGE` are broadcast to top-level windows.
-pub struct Host(());
+pub struct Host(HWND);
 
 impl Host {
+    pub fn hwnd(&self) -> HWND {
+        self.0
+    }
+
     pub fn create() -> windows::core::Result<Self> {
         // SAFETY: static null-terminated string.
         let msg = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
@@ -137,7 +147,7 @@ impl Host {
             )
         }?;
         HOST.store(hwnd.0 as isize, Ordering::Relaxed);
-        Ok(Self(()))
+        Ok(Self(hwnd))
     }
 
     /// Makes Ctrl+C / console close post `WM_CLOSE` to the host so the loop

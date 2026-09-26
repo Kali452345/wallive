@@ -42,6 +42,8 @@ name = "wallive"
 version = "0.1.0"
 dependencies = [
  "windows",
+ "windows-core",
+ "windows-numerics",
 ]
 
 [[package]]

@@ -19,6 +19,8 @@ struct Screen {
     holder: Option<HWND>,
     /// The window that will carry the video.
     surface: HWND,
+    /// Monitor rectangle in screen coordinates.
+    monitor: RECT,
 }
 
 impl Screen {
@@ -143,6 +145,18 @@ impl Wallpaper {
         None
     }
 
+    /// The video windows, one per monitor, with their sizes.
+    pub fn surfaces(&self) -> Vec<crate::playback::Surface> {
+        self.screens
+            .iter()
+            .map(|s| crate::playback::Surface {
+                hwnd: s.surface,
+                width: (s.monitor.right - s.monitor.left).max(1) as u32,
+                height: (s.monitor.bottom - s.monitor.top).max(1) as u32,
+            })
+            .collect()
+    }
+
     pub fn detach(&mut self) {
         for screen in self.screens.drain(..) {
             screen.destroy();
@@ -214,6 +228,7 @@ fn create_screen(parent: HWND, monitor: RECT, raised: bool) -> Option<Screen> {
                 Ok(surface) => Some(Screen {
                     holder: Some(holder),
                     surface,
+                    monitor,
                 }),
                 Err(e) => {
                     crate::log!("surface window failed: {e}");
@@ -230,5 +245,6 @@ fn create_screen(parent: HWND, monitor: RECT, raised: bool) -> Option<Screen> {
         .map(|surface| Screen {
             holder: None,
             surface,
+            monitor,
         })
 }

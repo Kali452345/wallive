@@ -36,8 +36,8 @@ const SPAWN_TIMEOUT_MS: u32 = 1_000;
 /// Guards against looping forever on a tree that changes while we walk it.
 const MAX_WINDOWS: usize = 256;
 
-/// Spike fill colour (BGR): a teal that is easy to spot in screenshots.
-const SPIKE_FILL: COLORREF = COLORREF(0x0080_8000);
+/// Background shown before the first video frame arrives (black).
+const BACKGROUND: COLORREF = COLORREF(0);
 
 pub fn find_progman() -> Option<HWND> {
     // SAFETY: static null-terminated class name; no window name.
@@ -214,7 +214,7 @@ fn register_class() -> windows::core::Result<()> {
         };
         // SAFETY: creating a GDI brush; it lives for the process lifetime as
         // the class background, which is intended.
-        let brush = unsafe { CreateSolidBrush(SPIKE_FILL) };
+        let brush = unsafe { CreateSolidBrush(BACKGROUND) };
         let class = WNDCLASSW {
             lpfnWndProc: Some(wallpaper_proc),
             hInstance: module.into(),
