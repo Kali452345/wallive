@@ -243,7 +243,7 @@ Useful commands for this preset:
 - `cargo fmt --check`
 - `cargo run --release`
 
-These become real once `Cargo.toml` exists. Rust is not installed on the owner machine yet (checked 2026-09-26); install it via rustup with the MSVC toolchain.
+Rust stable (MSVC toolchain, 1.98.1 on 2026-09-26) and Visual Studio Build Tools 2022 are installed on the owner machine.
 
 ## Architecture Rules
 
@@ -310,20 +310,21 @@ At the end of meaningful work:
 
 ### Current Phase
 
-Project starter generated. Replace this with the actual project phase.
+Spikes. Desktop-attach spike done on the raised desktop (2026-09-26); playback spike next. See `logs/handoff.md` for the exact stopping point.
 
 ### Working Features
 
-- Project memory structure exists.
-- AI operating instructions exist.
+- Project memory structure and AI operating instructions.
+- Rust crate with manifest embedding, lint gates for unsafe code, 17 unit tests.
+- Solid-colour wallpaper window behind the icons on the Windows 11 raised desktop, re-attached after Explorer restart and display change (event-driven, no timers).
 
 ### In Progress
 
-- Project implementation planning.
+- Playback spike (Media Engine windowless swap chain + DComp in the attached window).
 
 ### Not Yet Implemented
 
-- Replace this list with real project features.
+- Video playback, transcode/import, occlusion pause, power/session pause, tray, start with Windows, benchmark mode. Classic layout not verified on real hardware.
 
 ### Known Risks
 

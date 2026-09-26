@@ -22,8 +22,11 @@ video file ──> transcode/ (probe HW decode -> MF transcode -> cached H.264 N
 
 ## Current Shape
 
+Implemented so far (2026-09-26, desktop-attach spike): `Cargo.toml`, `build.rs` + `wallive.exe.manifest` (ADR-009), `src/main.rs`, `src/desktop/` (`tree.rs` pure layout logic + tests, `ffi.rs` Win32 wrappers, `mod.rs` attach/re-check), `src/runtime/` (host window, message loop, Explorer WinEvent hook - ADR-008), `tools/inspect-desktop.ps1`. Everything else below is planned.
+
 - `Cargo.toml`
-- `src/main.rs`: message loop, wiring, EcoQoS opt-in
+- `src/main.rs`: entry point and log macro (EcoQoS opt-in planned)
+- `src/runtime/`: hidden top-level host window, message loop, event queue, Explorer-scoped WinEvent hook; turns OS notifications into events for the other modules
 - `src/desktop/`: Explorer layout detection (classic WorkerW vs 24H2+ raised desktop), attach, and re-attach on `TaskbarCreated` / `WM_DISPLAYCHANGE`
 - `src/playback/`: D3D11 device, Media Engine, windowless swap chain, DComp visuals, loop, and pause / resume
 - `src/transcode/`: decoder capability probe and Media Foundation transcode to the cache
@@ -37,7 +40,7 @@ video file ──> transcode/ (probe HW decode -> MF transcode -> cached H.264 N
 
 ## Boundaries
 
-- `unsafe` / FFI lives in thin wrappers inside each module. Logic such as coverage math, codec selection, and config stays in safe Rust and is unit-testable without Windows APIs.
+- `unsafe` / FFI lives in thin wrappers inside each module (`ffi.rs`). The crate denies `unsafe_code` and clippy denies `undocumented_unsafe_blocks`; only `ffi.rs` files opt back in. Logic such as coverage math, codec selection, and config stays in safe Rust and is unit-testable without Windows APIs.
 - `occlusion/` and `power/` only emit pause/resume *reasons*. `playback/` owns the actual pause state (paused if any reason is active).
 - `desktop/` knows nothing about video. It only returns an HWND per monitor.
 - `transcode/` never runs in the playback path. It runs only on import (it may be a separate short-lived process to keep the resident RAM low).

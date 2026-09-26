@@ -2,64 +2,60 @@
 
 ## Current Branch
 
-Unknown. Inspect Git status.
+`spike/desktop-attach` (branched from `main` at `e176c41`, the docs scaffold). Not merged yet.
 
 ## Last Verified Build
 
-Not verified yet.
+2026-09-26: `cargo build --release`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test` (17 passed). rustc 1.98.1 MSVC, `windows` 0.62.2.
 
 ## Current Phase
 
-Project memory scaffold generated for Wallive.
+Spikes. Desktop-attach spike done on the raised desktop; playback spike next.
 
 ## Working Features
 
-- Starter AI documentation structure exists.
+- `cargo run --release` puts a solid teal window behind the desktop icons on every monitor (Windows 11 raised desktop verified) and logs to the console.
+- Re-attaches after Explorer restart (`TaskbarCreated`) and on `WM_DISPLAYCHANGE`; keeps z-order under the icons via an Explorer-scoped WinEvent hook. No timers.
+- Clean exit on Ctrl+C or `WM_CLOSE` to the `WalliveHost` window.
 
 ## In Progress
 
-- Project-specific implementation details need to be filled in.
-- Planned: Video wallpaper behind desktop icons on Windows 10 and Windows 11 (classic WorkerW layout and 24H2+ raised-desktop layout)
-- Planned: Same video on all monitors driven by a single shared decoder
-- Planned: Hardware decode through Media Foundation IMFMediaEngine
-- Planned: Presentation through the Media Engine windowless swap chain and DirectComposition with no extra render pass
-- Planned: Import pipeline that probes hardware decode support and transcodes to the native codec at monitor resolution
-- Planned: Automatic pause when the wallpaper is fully covered on every monitor
-- Planned: Pause on fullscreen apps and games / display off / session lock / Battery Saver
-- Planned: Re-attach after Explorer restart and display changes
-- Planned: Tray icon with a minimal menu
-- Planned: Start with Windows
-- Planned: Benchmark mode that measures CPU / GPU / power
+- Nothing half-done in code. Next is the playback spike.
 
-## Broken
+## Broken or Risky
 
-- Nothing recorded yet.
+- Classic WorkerW layout never run on a real classic desktop.
+- Multi-monitor and real display changes untested (one monitor on owner machine).
+- Explorer layer recreation (wallpaper/slideshow change) only unit-tested.
+- Unknown: whether a DirectComposition target on the surface window (a child of a *layered* holder) presents correctly. If not, try the DComp target on the holder itself, or drop the holder and target a plain child of Progman (DComp/flip presents do not need Progman's redirection surface).
 
 ## Last Change
 
-Generated project starter files.
+Desktop-attach spike plus fix for sent messages not waking the message loop (`logs/errors.md`).
 
 ## Last Test
 
-Generator file creation only.
+Real desktop on Windows 11 26200: tree dump + screenshot, Explorer kill/restart, synthetic display change, 60 s and 120 s idle CPU measurement (`logs/experiments.md`).
 
 ## Known Blockers
 
-- Rust is not installed on the owner machine (checked 2026-09-26). Install rustup with the `stable-x86_64-pc-windows-msvc` toolchain and the Visual Studio C++ Build Tools.
-- The folder is not a Git repository yet.
+- None for the next task. Classic-layout testing needs a Windows 10 or pre-24H2 VM.
 
 ## Recommended Next Task
 
-Build the riskiest pieces first, as throwaway prototypes, before the real app:
+Playback spike (ADR-003 / ADR-007), in the existing surface window from `desktop::Wallpaper`:
 
-1. Desktop-attach spike (ADR-006): a window with a solid color behind the icons on Windows 11 24H2+ (the owner's machine), re-attached after Explorer restart.
-2. Playback spike (ADR-003 / ADR-007): Media Engine in windowless swap-chain mode shown through DComp in that window, then the same surface in a second monitor's window. Measure CPU / GPU / RAM and check the present mode with PresentMon.
+1. D3D11 device (video support flag) + `IMFDXGIDeviceManager`; `IMFMediaEngine` with `MF_MEDIA_ENGINE_DXGI_MANAGER`, looping, muted.
+2. `IMFMediaEngineEx::EnableWindowlessSwapchainMode(TRUE)`, get the handle with `GetVideoSwapchainHandle`, and show it through `IDCompositionDevice::CreateSurfaceFromHandle` on a DComp visual targeting the surface window. Update the video rect with `UpdateVideoStream` on size change.
+3. Hand-made 1080p30 H.264 test clip (no audio). Measure CPU / GPU engines / RAM, capture PresentMon to see the present mode (MPO or not), record in `logs/experiments.md`.
+4. Then try the same swap-chain surface in a second visual to validate ADR-007 (can be a second window on one monitor).
 
-Record the results in `logs/experiments.md` and update ADR-003 / ADR-007 "Unverified" sections.
+Verify every API against current Microsoft docs first; update ADR-003 / ADR-007 "Unverified" sections with the results.
 
 ## Files Most Relevant to Next Task
 
-- `AGENTS.md`
-- `docs/decisions.md`
+- `src/desktop/mod.rs` (surface window per monitor)
+- `src/runtime/mod.rs` (event wiring)
+- `docs/decisions.md` (ADR-003, ADR-007)
 - `docs/architecture.md`
-- `docs/testing.md`
+- `logs/experiments.md`

@@ -180,6 +180,17 @@ A future Windows update changes the tree again. Keep layout detection isolated i
 - https://github.com/rexxpaper/rexpaper/pull/2
 - https://github.com/rocksdanister/lively/discussions/2464
 
+kirie is AGPL-3.0. It was read only for facts about Explorer's window tree (class names, the `0x052C` arguments `wParam=0xD, lParam=1`, the layered-holder technique). No kirie code was copied; Wallive's implementation is written independently. Keep it that way.
+
+### Verified (2026-09-26)
+
+Raised layout verified on the owner's Windows 11 26200: layered (alpha 255, click-through) holder child of Progman sits between `SHELLDLL_DefView` and Explorer's `WorkerW`; icons draw on top; Explorer restart re-attaches. See `logs/experiments.md`. Classic layout is implemented and unit-tested (`src/desktop/tree.rs`) but **not yet verified on a real classic desktop**.
+
+Implementation notes:
+- A layered child window needs the exe manifest to declare Windows 8+ (ADR-009); otherwise Windows silently drops `WS_EX_LAYERED`, so the style is read back after creation.
+- A layered window is invisible until `SetLayeredWindowAttributes(..., 255, LWA_ALPHA)`.
+- On a classic desktop that never splits, Wallive attaches nothing and waits, rather than drawing over the icons.
+
 ## ADR-007 - Multi-monitor: one decoder, same video everywhere
 
 ### Decision
@@ -205,3 +216,54 @@ Monitors are driven by different GPUs, because a surface cannot be shared across
 ### Unverified
 
 Whether one windowless swap-chain handle can back visuals in several windows. This is an inference from the DComp surface-handle model and must be prototyped first.
+
+## ADR-008 - Keeping the wallpaper attached: Explorer events, not polling
+
+### Decision
+
+Keep the wallpaper attached using OS notifications only:
+- A hidden **top-level** host window (message-only windows do not receive broadcasts) handles `TaskbarCreated` (Explorer restart: re-hook the new Explorer and re-attach) and `WM_DISPLAYCHANGE` (re-attach for the new monitor layout).
+- An out-of-context `SetWinEventHook` for `EVENT_OBJECT_CREATE..EVENT_OBJECT_REORDER`, **scoped to Explorer's process id**, with `WINEVENT_SKIPOWNPROCESS`, filtered to whole windows (`OBJID_WINDOW`, `CHILDID_SELF`). Each event triggers a cheap re-check: re-attach if our windows died or lost their parent, otherwise restore the z-order (icons > ours > Explorer's layer) moving only what is out of place.
+- Events are coalesced in a queue drained by the message loop outside the window procedure. `push()` posts a wake message when the queue becomes non-empty, because sent messages and WinEvent callbacks are delivered inside `GetMessageW` (see `logs/errors.md`, 2026-09-26).
+- `0x052C` is sent once per Progman instance. If Explorer creates its layer lazily, the resulting `WorkerW` creation event triggers the re-check; there is no sleep/retry loop.
+
+### Context
+
+Explorer recreates its wallpaper `WorkerW` on wallpaper or slideshow changes, and that can land above our windows on the raised desktop. Other projects (kirie, and Lively's equivalent logic) re-check on a timer. The project rules forbid polling when an OS notification exists.
+
+### Alternatives considered
+
+- Timer re-check every N ms: simple, but costs wakeups forever.
+- Global (all-process) WinEvent hook: sees far more events than needed.
+- Relying on `TaskbarCreated` alone: misses layer recreation and lazy `0x052C` answers.
+
+### Why this was selected
+
+Zero wakeups while Explorer's windows do not change; measured 0 ms CPU over 60 s idle and ~1 event/s during normal use (`logs/experiments.md`).
+
+### Revisit when
+
+Event volume from Explorer shows up in CPU measurements (then filter by class/parent in the callback or split the event range), or a Windows update moves the desktop windows out of Explorer's process.
+
+## ADR-009 - Exe manifest embedded through the MSVC linker
+
+### Decision
+
+`wallive.exe.manifest` declares Windows 10/11 `supportedOS` and `PerMonitorV2` DPI awareness. `build.rs` embeds it with `/MANIFEST:EMBED /MANIFESTINPUT:<path>` linker arguments.
+
+### Context
+
+Layered child windows (ADR-006) require a Windows 8+ `supportedOS` entry. Monitor rectangles and window positions must be in physical pixels on mixed-DPI setups.
+
+### Alternatives considered
+
+- `embed-resource` / `winres` crates: extra build dependency, needs `rc.exe`.
+- Calling `SetProcessDpiAwarenessContext` at runtime: works for DPI but not for `supportedOS`.
+
+### Why this was selected
+
+No extra dependency; the MSVC linker is already required.
+
+### Revisit when
+
+The project needs other resources (tray icon, version info). Then a `.rc` file via a resource crate may replace this.
