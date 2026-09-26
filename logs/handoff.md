@@ -2,7 +2,7 @@
 
 ## Current Branch
 
-`spike/desktop-attach` (branched from `main` at `e176c41`). Checkpoints: `5a4de53` attach spike, `5a89838` Media Engine spike, `2472626` playback backend 2, `11ed5bf` pause policy, `3ef87a7` app shell, `892ab1c` owner-reported fixes, `2900f11` README / license / issue forms, `HASH` several videos (playlist). Not merged yet.
+`spike/desktop-attach` (branched from `main` at `e176c41`). Checkpoints: `5a4de53` attach spike, `5a89838` Media Engine spike, `2472626` playback backend 2, `11ed5bf` pause policy, `3ef87a7` app shell, `892ab1c` owner-reported fixes, `2900f11` README / license / issue forms, `94a9b31` several videos (playlist). Not merged yet.
 
 ## Last Verified Build
 

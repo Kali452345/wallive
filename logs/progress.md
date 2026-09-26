@@ -143,7 +143,7 @@ Read `logs/handoff.md`. Start the playback spike in the attached surface window.
 
 ### Changed
 
-- `README.md`, `LICENSE` (MIT), `.github/` issue forms (bug, test report) and PR template: what is tested and what is not (multi-monitor, 4K, Windows 10, NVIDIA / AMD), how to report and contribute (commit `2900f11`).
+- `README.md`, `LICENSE` (MIT), `.github/` issue forms (bug, test report) and PR template: what is tested and what is not (multi-monitor, 4K, Windows 10, NVIDIA / AMD), how to report and contribute (commit `2900f11`). Playlist: commit `94a9b31`.
 - Several videos take turns (ADR-012):
   - `src/config/mod.rs`: `source=` list, `current`, `switch_minutes`, `shuffle`; reads older one-video configs.
   - `src/runtime/playlist.rs`: next index in order or shuffled (xorshift).
