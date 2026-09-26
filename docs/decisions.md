@@ -55,7 +55,7 @@ A required API is missing or unusable in windows-rs.
 
 A dedicated video thread decodes with a hardware `IMFSourceReader` (`MF_SOURCE_READER_D3D_MANAGER`, native NV12 D3D11 textures), draws each frame into a flip-model composition swap chain with one `ID3D11VideoContext::VideoProcessorBlt` (cover crop + scale + YCbCr->RGB, driver auto-processing off), and presents with sync interval 0. Frames are held for N display refreshes by waiting on DWM's compositor clock (`DCompositionWaitForCompositorClock`, resolved at run time; Windows 10 falls back to `Present(N)`). The swap chain is the content of one DirectComposition visual per wallpaper window. Pause = the thread blocks on a kernel event.
 
-Originally (first version of this ADR): `IMFMediaEngine` in windowless swap-chain mode. Implemented and measured in commit `5a89838`, then replaced.
+Originally (first version of this ADR): `IMFMediaEngine` in windowless swap-chain mode. Implemented and measured in commit `856aa0c`, then replaced.
 
 ### Context
 

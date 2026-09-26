@@ -37,7 +37,7 @@ Git init, Rust toolchain setup, and the first spike from the handoff: a window b
 
 ### Changed
 
-- Git repo initialised on `main` (initial commit `e176c41` = docs scaffold); spike work on branch `spike/desktop-attach`. Repo-local git identity set (`KaliOxygen`).
+- Git repo initialised on `main` (initial commit `408660a` = docs scaffold); spike work on branch `spike/desktop-attach`. Repo-local git identity set (`KaliOxygen`).
 - Rust stable MSVC toolchain set as default via rustup (rustup was installed, no default toolchain).
 - Added crate: `Cargo.toml` (`windows` 0.62, lints: `unsafe_code = deny`, `undocumented_unsafe_blocks = deny`), `build.rs` + `wallive.exe.manifest` (ADR-009).
 - `src/desktop/tree.rs`: pure layout detection (classic / raised / unsplit) and minimal z-order fix, 17 unit tests.
@@ -71,8 +71,8 @@ Read `logs/handoff.md`. Start the playback spike in the attached surface window.
 
 ### Changed
 
-- `5a89838`: Media Engine windowless-swap-chain playback spike, measured (~25% of a core, ~155 MB) - over budget (`logs/experiments.md`).
-- `2472626`: playback backend 2 (ADR-003 revised): hardware Source Reader -> D3D11 video processor (cover crop, BT.709) -> composition swap chain shown in one DComp visual per wallpaper window, paced by `DCompositionWaitForCompositorClock`. `src/playback/`, `tools/bench.ps1` (benchmark mode), `tools/desktop-motion.ps1`, `--bench-decode`, `--make-test-clip`.
+- `856aa0c`: Media Engine windowless-swap-chain playback spike, measured (~25% of a core, ~155 MB) - over budget (`logs/experiments.md`).
+- `522cef3`: playback backend 2 (ADR-003 revised): hardware Source Reader -> D3D11 video processor (cover crop, BT.709) -> composition swap chain shown in one DComp visual per wallpaper window, paced by `DCompositionWaitForCompositorClock`. `src/playback/`, `tools/bench.ps1` (benchmark mode), `tools/desktop-motion.ps1`, `--bench-decode`, `--make-test-clip`.
 
 ### Verification
 
@@ -143,7 +143,7 @@ Read `logs/handoff.md`. Start the playback spike in the attached surface window.
 
 ### Changed
 
-- `README.md`, `LICENSE` (MIT), `.github/` issue forms (bug, test report) and PR template: what is tested and what is not (multi-monitor, 4K, Windows 10, NVIDIA / AMD), how to report and contribute (commit `2900f11`). Playlist: commit `94a9b31`.
+- `README.md`, `LICENSE` (MIT), `.github/` issue forms (bug, test report) and PR template: what is tested and what is not (multi-monitor, 4K, Windows 10, NVIDIA / AMD), how to report and contribute (commit `30992d2`). Playlist: commit `7cf3158`.
 - Several videos take turns (ADR-012):
   - `src/config/mod.rs`: `source=` list, `current`, `switch_minutes`, `shuffle`; reads older one-video configs.
   - `src/runtime/playlist.rs`: next index in order or shuffled (xorshift).

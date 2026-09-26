@@ -2,7 +2,7 @@
 
 ## Current Branch
 
-`spike/desktop-attach` (branched from `main` at `e176c41`). Checkpoints: `5a4de53` attach spike, `5a89838` Media Engine spike, `2472626` playback backend 2, `11ed5bf` pause policy, `3ef87a7` app shell, `892ab1c` owner-reported fixes, `2900f11` README / license / issue forms, `94a9b31` several videos (playlist), then v1.0.0 packaging. Merged into `main` and pushed to https://github.com/Kali452345/wallive (public); release `v1.0.0` with the installer. Commit hashes changed when the author email was rewritten before the first push, so older hashes in the logs refer to the local history before the rewrite.
+`main` (the spike branch `spike/desktop-attach` was merged fast-forward). Checkpoints: `f4848c3` attach spike, `856aa0c` Media Engine spike, `522cef3` playback backend 2, `191c333` pause policy, `ef56017` app shell, `b47b9a5` owner-reported fixes, `30992d2` README / license / issue forms, `7cf3158` several videos (playlist), then v1.0.0 packaging. Merged into `main` and pushed to https://github.com/Kali452345/wallive (public); release `v1.0.0` with the installer.
 
 ## Last Verified Build
 
@@ -42,7 +42,7 @@ All planned features exist and run on the Windows 11 raised desktop. Remaining: 
 v1.0.0: Inno Setup installer (per-user, ADR-013), `--version`, CI workflow, changelog, README install section, GitHub repository and release.
 
 Before that: 
-Several videos (ADR-012): multi-select picker and CLI, import queue, one-shot switch timer, switch at loop end, Next video / Switch every / Shuffle in the tray menu. Before that: README for testers, MIT license, issue forms (`2900f11`).
+Several videos (ADR-012): multi-select picker and CLI, import queue, one-shot switch timer, switch at loop end, Next video / Switch every / Shuffle in the tray menu. Before that: README for testers, MIT license, issue forms (`30992d2`).
 
 ## Last Test
 
@@ -52,7 +52,6 @@ Real tray app: 3-video list via CLI, imports queued, timer + loop-end switches, 
 
 - Git identity for this repo: `user.email` = `228992827+Kali452345@users.noreply.github.com` (the owner chose not to publish the Gmail address).
 - The installer was tested and uninstalled again; the dev build `target\release\wallive.exe` (1.0.0) is running with the owner's restored settings.
-
 - The tray app is running with the owner's config restored (one video, "Anime Red Eye").
 - HKCU Run value `Wallive` is not set (Start with Windows off).
 
