@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Build output
+dist/
+build/
+out/
+.next/
+target/
+
+# Logs and caches
+*.log
+.cache/
+.turbo/
+.vite/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local artifacts
+*.zip
+*.tar
+*.tgz
+
+# Wallive local caches
+transcoded/
+*.etl
