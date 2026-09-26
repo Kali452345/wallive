@@ -187,3 +187,21 @@ Read `logs/handoff.md`. Start the playback spike in the attached surface window.
   - Reinstalling while it ran closed it and succeeded.
   - Uninstalling while it ran closed it and removed the files, shortcut, Run value, uninstall entry and data folders.
   - The owner's settings and imports were backed up before and restored after.
+
+## 2026-09-26 - New app icon
+
+### Changed
+
+- `icon_pixels` (`src/shell/mod.rs`) draws a dusk wave instead of the play triangle: violet sky, coral sun, teal-to-blue wave with a white crest. Thicker crest and bigger sun at 24 px and below. The test checks the corner, crest, sun, sky and water pixels.
+- `installer/wallive.ico` regenerated (`WALLIVE_WRITE_ICO=... cargo test ico_file`), installer rebuilt.
+- Candidates (current, wave "W", sunset landscape, dark live wave, play + wave, refinements) were rendered at 256 / 32 / 16 px on light and dark backgrounds before choosing.
+
+### Verification
+
+- build / clippy / fmt / 71 tests pass. The ICO reads back with 16 / 32 / 48 / 256 images of the new design. `tools/package.ps1` rebuilt `Wallive-1.0.0-setup.exe`.
+- Cost unchanged: the icon is drawn once at start (a few thousand pixels).
+- Not checked on screen: the display was off, so the tray screenshot was black.
+
+### Remaining
+
+- CI runs are blocked by a GitHub account billing lock (`logs/errors.md`).

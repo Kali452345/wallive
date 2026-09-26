@@ -403,6 +403,32 @@ Use a mouse click on the item. The menu `#32768` window rect (owned by the walli
 
 RESOLVED (test scripts only)
 
+## CI job not started: account locked
+
+### Date
+
+2026-09-26
+
+### Area
+
+GitHub Actions (`.github/workflows/ci.yml`).
+
+### Symptoms
+
+The first CI run (36271662884) failed after ~2 s without running any step. Annotation: "The job was not started because your account is locked due to a billing issue."
+
+### Root Cause
+
+GitHub account billing lock on the owner's account. Not the workflow or the code: the same fmt / clippy / test / build steps pass locally.
+
+### Working Fix
+
+The owner has to resolve billing in GitHub settings (Billing and plans), then `gh run rerun <id>` or push again.
+
+### Status
+
+OPEN (owner action)
+
 ## Template
 
 ### Date

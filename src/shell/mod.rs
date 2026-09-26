@@ -166,45 +166,58 @@ pub fn tooltip(status: &str) -> String {
 }
 
 /// Tray icon pixels, `size` x `size`, straight-alpha BGRA as `0xAARRGGBB`,
-/// top row first: a rounded square with a teal-to-blue gradient and a white
-/// play triangle. Drawn at run time so the binary needs no icon resource
-/// tooling; 4x4 supersampling for smooth edges.
+/// top row first: a rounded square holding a dusk scene - violet sky, coral
+/// sun and a teal-to-blue wave under a white crest (a wallpaper that moves).
+/// Drawn at run time so the binary needs no icon resource tooling; 4x4
+/// supersampling for smooth edges. Small sizes get a thicker crest and a
+/// bigger sun so they stay legible in the tray.
 pub fn icon_pixels(size: u32) -> Vec<u32> {
+    type Rgb = (f32, f32, f32);
     let s = size.max(1) as f32;
-    let radius = s * 0.22;
-    let inside_square = |x: f32, y: f32| {
-        let cx = x.clamp(radius, s - radius);
-        let cy = y.clamp(radius, s - radius);
-        (x - cx).powi(2) + (y - cy).powi(2) <= radius * radius
+    let (crest_width, sun_radius) = if size > 24 {
+        (0.09, 0.10)
+    } else {
+        (0.12, 0.12)
     };
-    // Play triangle, optically centred (shifted right a little).
-    let (ax, ay) = (s * 0.38, s * 0.28);
-    let (bx, by) = (s * 0.38, s * 0.72);
-    let (cx, cy) = (s * 0.74, s * 0.5);
-    let edge = |px: f32, py: f32, x0: f32, y0: f32, x1: f32, y1: f32| {
-        (x1 - x0) * (py - y0) - (y1 - y0) * (px - x0)
+    let lerp = |a: Rgb, b: Rgb, t: f32| {
+        let t = t.clamp(0.0, 1.0);
+        (
+            a.0 + (b.0 - a.0) * t,
+            a.1 + (b.1 - a.1) * t,
+            a.2 + (b.2 - a.2) * t,
+        )
     };
-    let inside_triangle = |x: f32, y: f32| {
-        let d0 = edge(x, y, ax, ay, bx, by);
-        let d1 = edge(x, y, bx, by, cx, cy);
-        let d2 = edge(x, y, cx, cy, ax, ay);
-        (d0 <= 0.0 && d1 <= 0.0 && d2 <= 0.0) || (d0 >= 0.0 && d1 >= 0.0 && d2 >= 0.0)
+    // Colour at (u, v) in 0..1 square coordinates, `None` outside the square.
+    let sample = |u: f32, v: f32| -> Option<Rgb> {
+        const RADIUS: f32 = 0.22;
+        let (cu, cv) = (u.clamp(RADIUS, 1.0 - RADIUS), v.clamp(RADIUS, 1.0 - RADIUS));
+        if (u - cu).powi(2) + (v - cv).powi(2) > RADIUS * RADIUS {
+            return None;
+        }
+        let crest = 0.55 + 0.09 * ((u - 0.08) * std::f32::consts::TAU).sin();
+        Some(if (v - crest).abs() <= crest_width / 2.0 {
+            (255.0, 255.0, 255.0)
+        } else if v > crest {
+            lerp((45.0, 212.0, 191.0), (37.0, 99.0, 235.0), (v - 0.45) / 0.55)
+        } else if (u - 0.73).hypot(v - 0.27) <= sun_radius {
+            (255.0, 140.0, 100.0)
+        } else {
+            lerp((60.0, 50.0, 160.0), (130.0, 70.0, 210.0), v / 0.6)
+        })
     };
 
     const N: u32 = 4;
     let mut out = Vec::with_capacity((size * size) as usize);
     for py in 0..size {
         for px in 0..size {
-            let (mut cover, mut white) = (0u32, 0u32);
+            let (mut cover, mut sum) = (0u32, (0.0, 0.0, 0.0));
             for sy in 0..N {
                 for sx in 0..N {
-                    let x = px as f32 + (sx as f32 + 0.5) / N as f32;
-                    let y = py as f32 + (sy as f32 + 0.5) / N as f32;
-                    if inside_square(x, y) {
+                    let u = (px as f32 + (sx as f32 + 0.5) / N as f32) / s;
+                    let v = (py as f32 + (sy as f32 + 0.5) / N as f32) / s;
+                    if let Some((r, g, b)) = sample(u, v) {
                         cover += 1;
-                        if inside_triangle(x, y) {
-                            white += 1;
-                        }
+                        sum = (sum.0 + r, sum.1 + g, sum.2 + b);
                     }
                 }
             }
@@ -212,16 +225,9 @@ pub fn icon_pixels(size: u32) -> Vec<u32> {
                 out.push(0);
                 continue;
             }
-            // Gradient from teal (top left) to blue (bottom right).
-            let t = (px + py) as f32 / (2.0 * s);
-            let lerp = |a: f32, b: f32| a + (b - a) * t;
-            let w = white as f32 / cover as f32;
-            let mix = |c: f32| (c + (255.0 - c) * w).round() as u32;
-            let (r, g, b) = (
-                mix(lerp(0.0, 40.0)),
-                mix(lerp(180.0, 90.0)),
-                mix(lerp(170.0, 220.0)),
-            );
+            // Straight alpha: the colour is the mean of the covered samples.
+            let channel = |c: f32| (c / cover as f32).round() as u32;
+            let (r, g, b) = (channel(sum.0), channel(sum.1), channel(sum.2));
             let a = (255 * cover / (N * N)).min(255);
             out.push((a << 24) | (r << 16) | (g << 8) | b);
         }
@@ -324,17 +330,20 @@ mod tests {
     }
 
     #[test]
-    fn icon_has_transparent_corners_and_white_centre() {
+    fn icon_draws_the_dusk_wave() {
         let size = 32;
         let px = icon_pixels(size);
         assert_eq!(px.len(), 32 * 32);
-        assert_eq!(px[0] >> 24, 0, "corner must be transparent");
-        let centre = px[(16 * size + 16) as usize];
-        assert_eq!(centre >> 24, 255);
-        assert_eq!(centre & 0x00ff_ffff, 0x00ff_ffff, "triangle is white");
-        let edge = px[(16 * size + 3) as usize];
-        assert_eq!(edge >> 24, 255);
-        assert_ne!(edge & 0x00ff_ffff, 0x00ff_ffff, "background is coloured");
+        let at = |x: u32, y: u32| px[(y * size + x) as usize];
+        assert_eq!(at(0, 0) >> 24, 0, "corner must be transparent");
+        for (x, y) in [(10, 20), (16, 4), (23, 8), (16, 28)] {
+            assert_eq!(at(x, y) >> 24, 255, "({x}, {y}) is opaque");
+        }
+        assert_eq!(at(10, 20) & 0x00ff_ffff, 0x00ff_ffff, "wave crest is white");
+        assert_eq!(at(23, 8) & 0x00ff_ffff, 0x00ff_8c64, "sun is coral");
+        let (sky, water) = (at(16, 4), at(16, 28));
+        assert!(sky & 0xff > (sky >> 8) & 0xff, "sky is violet");
+        assert!(water & 0xff > (water >> 16) & 0xff, "water is blue");
     }
 
     /// A Windows `.ico` with 32-bpp images of `icon_pixels` at `sizes`.

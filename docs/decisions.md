@@ -393,7 +393,7 @@ Date: 2026-09-26
 - An optional, preselected task writes the same HKCU Run value as the tray menu. Uninstall removes that value if it points at the install folder, even when it was set from the tray.
 - Setup and uninstall close a running copy by posting `WM_CLOSE` to the `WalliveHost` window (like `wallive --quit`) and wait up to 10 s. The Restart Manager is off because it cannot close a tray app without a main window.
 - Uninstall deletes `%LOCALAPPDATA%\Wallive` (imports, log) and `%APPDATA%\Wallive` (settings).
-- The icon `installer/wallive.ico` (16 / 32 / 48 / 256) is generated from the tray icon's drawing code by a test (`WALLIVE_WRITE_ICO=<path> cargo test ico_file`). The exe itself still has no icon resource (ADR-009).
+- The icon `installer/wallive.ico` (16 / 32 / 48 / 256) is generated from the tray icon's drawing code by a test (`WALLIVE_WRITE_ICO=<path> cargo test ico_file`). The exe itself still has no icon resource (ADR-009). Icon design (2026-09-26, owner request): a dusk wave (violet sky, coral sun, teal-to-blue wave under a white crest) replaced the play triangle; the crest and sun grow at 16-24 px so the tray icon stays legible. Chosen over a wave-shaped "W" lettermark and a sunset landscape after comparing 16 / 32 / 256 px renders on light and dark taskbars.
 - Releases are GitHub Releases tagged `vX.Y.Z` with the installer and checksum attached, built locally for now. CI (`.github/workflows/ci.yml`, windows-latest) runs fmt, clippy, tests and a release build on pushes to `main` and on pull requests.
 - The installer is not code-signed. The README explains the SmartScreen prompt and the checksum.
 

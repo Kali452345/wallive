@@ -35,11 +35,14 @@ All planned features exist and run on the Windows 11 raised desktop. Remaining: 
 - Multi-monitor untested (one monitor here).
 - Unverified pause triggers: exclusive-fullscreen game, saver toggles, battery, session lock.
 - Windows 11 puts the tray icon in the overflow (^) area by default.
+- CI does not run: the GitHub account is locked for a billing issue (`logs/errors.md`). Checks were run locally.
 - Playlist: a video longer than the interval plays to its end before switching; after a monitor change, a restart re-imports every chosen video.
 
 ## Last Change
 
-v1.0.0: Inno Setup installer (per-user, ADR-013), `--version`, CI workflow, changelog, README install section, GitHub repository and release.
+New app icon (dusk wave) in the tray and installer; `v1.0.0` tagged and released with it.
+
+Before that: v1.0.0: Inno Setup installer (per-user, ADR-013), `--version`, CI workflow, changelog, README install section, GitHub repository and release.
 
 Before that: 
 Several videos (ADR-012): multi-select picker and CLI, import queue, one-shot switch timer, switch at loop end, Next video / Switch every / Shuffle in the tray menu. Before that: README for testers, MIT license, issue forms (`30992d2`).

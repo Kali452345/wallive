@@ -12,5 +12,6 @@ First release.
 - Keeps working after Explorer restarts and display changes.
 - Tray menu, Start with Windows, `wallive --version`.
 - Per-user installer (no admin rights) built with Inno Setup.
+- App icon: a dusk wave (violet sky, coral sun, teal wave under a white crest), drawn in code for the tray and the installer.
 
 Measured on the development laptop (Intel iGPU, 1080p30): ~0.9% CPU on AC power, ~81 MB private memory while playing, 29 MB after 10 s paused, no disk reads after the first loop.
