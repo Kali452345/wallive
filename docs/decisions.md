@@ -345,3 +345,39 @@ It keeps the always-running process to the wallpaper, the tray and the event wir
 ### Revisit when
 
 Startup of the picker child is noticeably slow, or several imports need to be queued.
+
+Update 2026-09-26: several videos are supported and imports are queued one at a time (ADR-012). The menu now has Choose videos..., Next video, Switch every, and Shuffle. The cache keeps the imports of all chosen videos.
+
+## ADR-012 - Several videos: playlist switched by a one-shot timer at loop end
+
+Date: 2026-09-26
+
+### Decision
+
+- `config.txt` keeps one `source=` line per chosen video (in order) plus `current=`, `switch_minutes=` (default 5) and `shuffle=`. A config with one `source=` line from an older build still reads as a one-video list.
+- The picker allows multi-select (`FOS_ALLOWMULTISELECT`) and prints one path per line. `wallive a.mp4 b.mp4 ...` passes all paths; `WM_COPYDATA` to a running copy carries them separated by `\n`.
+- Imports run one at a time: the current video first, then the rest in the chosen order. If nothing is on screen yet, an already imported video is shown at once. A video whose import fails is skipped until it is chosen again. A video whose source cannot be read (unplugged drive) is skipped but stays in the list. Imports of videos that are no longer chosen are deleted from the cache. The one on screen and a running import's temporary files are kept.
+- The import size is fixed when the desktop is first attached, and changes only when videos are chosen. A game changing the display mode therefore never starts re-imports.
+- Switching: with 2+ imported videos the UI thread arms a one-shot `SetTimer` for the interval (tray submenu 1 / 5 / 15 / 30 / 60 min). When it fires, the player is asked to report its next loop end (`notify_at_loop_end`). At the end of the stream the video thread posts `MEDIA_LOOPED` and holds the last frame for up to 1 s. The UI opens the next video (stopping that thread), or lets it loop. **Next video** switches at once. In order means the next ready index, wrapping. Shuffle means a random ready video other than the current one. Re-arming or killing the timer also drops a `SwitchDue` already queued, which can happen when the timer fires while the tray menu's modal loop runs.
+
+### Context
+
+The owner asked to choose several videos that take turns, switching every few minutes, in order with a shuffle toggle. Switching at the loop end was chosen so a scene is never cut mid-way. Per AGENTS.md there must be no polling where an event exists. Nothing tells us "N minutes passed" except a timer, and a one-shot timer re-armed per switch is the cheapest form.
+
+### Alternatives considered
+
+- Switch exactly on the timer, mid-scene: simpler, but cuts scenes; the owner preferred loop ends.
+- Switch after N loops: intervals vary wildly with clip length (10 s vs 2 min clips).
+- Periodic timer: wakes the process every interval even while nothing can switch. The one-shot timer is armed only while 2+ videos are ready, and is re-armed only after a switch.
+- Import all videos in parallel: several encoder instances at once (hundreds of MB each for 4K, ADR-011) and the first video would take longer.
+- Pre-open the next video's reader for a gapless switch: a second decoder's surfaces (~45 MB at 1080p) for the whole interval. The measured switch gap is ~0.2 s with the last frame held on screen, which is not visible as black.
+
+### Cost
+
+- Playing: unchanged per video (same decoder path). One `WM_TIMER` per interval; about 0.2 s of reader + decoder setup per switch.
+- Paused: at most one timer wake-up per interval; the switch itself waits for playback to reach a loop end.
+- Measured numbers: `logs/experiments.md` (2026-09-26 playlist entry).
+
+### Revisit when
+
+Clips longer than the interval make switches feel late (a cap could force the switch mid-scene), or users want per-video intervals.

@@ -10,17 +10,21 @@
 //! - Power-setting and session notifications: pause reasons.
 //! - Tray clicks, finished child-process tasks, `wallive <video>` requests.
 //! - Events posted from the video thread.
+//! - One one-shot timer per playlist switch when several videos take turns
+//!   (ADR-012).
 
 mod ffi;
 mod pause;
+mod playlist;
 mod tasks;
 
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::config::{self, Config};
 use crate::desktop::{self, Status, Wallpaper};
-use crate::playback::Player;
+use crate::playback::{self, Player};
 use crate::shell::{self, Command, MenuState};
 use crate::{log, occlusion, power};
 use ffi::{Event, ExplorerHook, Host, WindowHooks};
@@ -33,8 +37,8 @@ pub struct Options {
     /// `--play <video>`: play this file as-is and never write settings.
     /// `None`: the normal app, driven by `config.txt`.
     pub video: Option<PathBuf>,
-    /// `wallive <video>`: choose this video at start, as if picked.
-    pub open: Option<PathBuf>,
+    /// `wallive <video>...`: choose these videos at start, as if picked.
+    pub open: Vec<PathBuf>,
 }
 
 pub fn run(options: Options) -> windows::core::Result<()> {
@@ -65,9 +69,26 @@ struct App {
     persist: bool,
     first_run: bool,
     fixed_video: Option<PathBuf>,
-    open_at_start: Option<PathBuf>,
+    open_at_start: Vec<PathBuf>,
     tasks: Tasks,
     exe: PathBuf,
+    /// Screen size imports are made for. Set once the desktop is attached
+    /// and changed only when videos are chosen, so a game switching the
+    /// display mode does not start re-imports.
+    size: Option<(u32, u32)>,
+    rng: playlist::Rng,
+    /// Sources waiting for an import, in order; one import runs at a time.
+    import_queue: VecDeque<PathBuf>,
+    importing: Option<PathBuf>,
+    /// Sources whose import failed; not retried until chosen again.
+    failed: HashSet<PathBuf>,
+    /// The playable file on screen.
+    playing: Option<PathBuf>,
+    /// The switch timer fired: switch when the video next reaches its end.
+    switch_due: bool,
+    timer_armed: bool,
+    /// The video thread stopped on an error; switch without a loop end.
+    media_failed: bool,
 }
 
 impl App {
@@ -105,6 +126,15 @@ impl App {
             open_at_start: options.open,
             tasks,
             exe,
+            size: None,
+            rng: playlist::Rng::seeded(),
+            import_queue: VecDeque::new(),
+            importing: None,
+            failed: HashSet::new(),
+            playing: None,
+            switch_due: false,
+            timer_armed: false,
+            media_failed: false,
         }
     }
 
@@ -117,20 +147,16 @@ impl App {
             .ok();
         self.add_tray();
 
+        self.size = self.attached_size();
         if let Some(video) = self.fixed_video.clone() {
             self.open_video(&video);
-        } else if let Some(video) = self.open_at_start.take() {
-            self.choose(video);
-        } else if let Some(wallpaper) = self.config.wallpaper.clone().filter(|p| p.is_file()) {
-            self.open_video(&wallpaper);
-        } else if let Some(source) = self.config.source.clone().filter(|p| p.is_file()) {
-            log!(
-                "cached wallpaper missing; importing {} again",
-                source.display()
-            );
-            self.choose(source);
+        } else if !self.open_at_start.is_empty() {
+            let videos = std::mem::take(&mut self.open_at_start);
+            self.choose(videos);
+        } else if !self.config.sources.is_empty() {
+            self.resume();
         } else if self.first_run {
-            log!("first run: asking for a video");
+            log!("first run: asking for videos");
             self.tasks.pick();
         }
         self.refresh();
@@ -156,6 +182,27 @@ impl App {
             Event::Media { event, param } => {
                 if let Some(p) = self.player.as_mut() {
                     p.on_event(event, param);
+                }
+                match event {
+                    playback::MEDIA_LOOPED if self.switch_due => self.next_video(),
+                    playback::MEDIA_LOOPED => {
+                        if let Some(p) = &self.player {
+                            p.continue_after_loop();
+                        }
+                    }
+                    playback::MEDIA_ERROR => self.media_failed = true,
+                    _ => {}
+                }
+                None
+            }
+            Event::SwitchDue => {
+                self.timer_armed = false;
+                if self.media_failed {
+                    self.next_video();
+                } else if let Some(p) = self.player.as_mut() {
+                    log!("playlist: switching at the end of this loop");
+                    self.switch_due = true;
+                    p.notify_at_loop_end();
                 }
                 None
             }
@@ -185,10 +232,9 @@ impl App {
                 None
             }
             Event::OpenRequested => {
-                for path in ffi::take_open_requests() {
-                    log!("open requested: {}", path.display());
-                    self.choose(path);
-                }
+                let videos = ffi::take_open_requests();
+                log!("open requested: {} video(s)", videos.len());
+                self.choose(videos);
                 None
             }
         };
@@ -204,6 +250,15 @@ impl App {
             // The monitor layout may have changed what is covered.
             if self.watch.is_some() {
                 self.check_windows();
+            }
+            // Started before the desktop was ready (sign-in): imports can
+            // now target the real screen size.
+            if self.size.is_none() {
+                self.size = self.attached_size();
+                if self.size.is_some() {
+                    self.ensure_imports();
+                    self.ensure_timer();
+                }
             }
         }
         self.refresh();
@@ -253,6 +308,7 @@ impl App {
         log!("playback: opening {}", path.display());
         player.open(path);
         player.set_surfaces(self.wallpaper.surfaces());
+        self.media_failed = false;
         if self.watch.is_none() {
             // The pause policy only matters while there is something to pause.
             if power::enable_eco_qos() {
@@ -266,81 +322,287 @@ impl App {
         self.check_windows();
     }
 
-    /// The user picked `source`: play the cached import, or import it first.
-    fn choose(&mut self, source: PathBuf) {
-        if !source.is_file() {
-            log!("not a file: {}", source.display());
-            return;
+    /// Start-up with saved videos: show the last one straight from the
+    /// cache, then import whatever is missing.
+    fn resume(&mut self) {
+        if let Some(wallpaper) = self.config.wallpaper.clone().filter(|p| p.is_file()) {
+            self.open_video(&wallpaper);
+            self.playing = Some(wallpaper);
+        } else {
+            log!("cached wallpaper missing");
+            let current = self.config.current;
+            let other = playlist::next(current, &self.ready_list(), false, 0);
+            if !self.play_index(current)
+                && let Some(i) = other
+            {
+                self.play_index(i);
+            }
         }
-        let size = self.import_size();
-        let Some(output) = config::cache_file(&source, size) else {
-            log!("cannot read {}", source.display());
-            return;
-        };
-        if output.is_file() {
-            self.switch_to(source, output);
-            return;
-        }
-        if let Err(e) = std::fs::create_dir_all(config::cache_dir()) {
-            log!("cannot create the cache folder: {e}");
-            return;
-        }
-        log!(
-            "importing {} for {}x{} -> {}",
-            source.display(),
-            size.0,
-            size.1,
-            output.display()
-        );
-        self.tasks.import(&source, &output, size);
+        self.ensure_imports();
+        self.ensure_timer();
     }
 
-    /// Largest monitor, which the import covers (ADR-004).
-    fn import_size(&self) -> (u32, u32) {
+    /// The user chose these videos (picker, `wallive <video>...`). The first
+    /// plays as soon as it is imported; the others are imported after it.
+    fn choose(&mut self, videos: Vec<PathBuf>) {
+        if self.fixed_video.is_some() {
+            return;
+        }
+        let mut sources: Vec<PathBuf> = Vec::new();
+        for video in videos {
+            if !video.is_file() {
+                log!("not a file: {}", video.display());
+            } else if !sources.contains(&video) {
+                sources.push(video);
+            }
+        }
+        if sources.is_empty() {
+            return;
+        }
+        log!("chose {} video(s)", sources.len());
+        for source in &sources {
+            self.failed.remove(source);
+        }
+        self.config.sources = sources;
+        self.config.current = 0;
+        self.import_queue.clear();
+        // A monitor bigger than at the last choice gets imports to match.
+        self.size = Some(self.attached_size().unwrap_or((1920, 1080)));
+        if !self.play_index(0) {
+            // Nothing on screen yet: show a video that is already imported.
+            // Otherwise the old video stays until the first new one is ready.
+            let other = playlist::next(0, &self.ready_list(), false, 0);
+            if self.playing.is_some() || !other.is_some_and(|i| self.play_index(i)) {
+                self.save();
+                self.clean_cache();
+            }
+        }
+        self.ensure_imports();
+        self.ensure_timer();
+    }
+
+    /// Largest monitor, which the import covers (ADR-004); `None` before
+    /// the desktop is attached.
+    fn attached_size(&self) -> Option<(u32, u32)> {
         self.wallpaper
             .surfaces()
             .iter()
             .map(|s| (s.width, s.height))
             .max_by_key(|&(w, h)| u64::from(w) * u64::from(h))
-            .unwrap_or((1920, 1080))
     }
 
-    fn switch_to(&mut self, source: PathBuf, output: PathBuf) {
+    /// The imported copy of video `i`, if it exists.
+    fn ready(&self, i: usize) -> Option<PathBuf> {
+        let source = self.config.sources.get(i)?;
+        config::cache_file(source, self.size?).filter(|p| p.is_file())
+    }
+
+    fn ready_list(&self) -> Vec<bool> {
+        (0..self.config.sources.len())
+            .map(|i| self.ready(i).is_some())
+            .collect()
+    }
+
+    /// Shows video `i` if it is imported. Returns whether it did.
+    fn play_index(&mut self, i: usize) -> bool {
+        let Some(output) = self.ready(i) else {
+            return false;
+        };
+        let n = self.config.sources.len();
+        if n > 1 {
+            log!(
+                "playlist: video {}/{n}: {}",
+                i + 1,
+                self.config.sources[i].display()
+            );
+        }
         self.open_video(&output);
+        self.playing = Some(output.clone());
+        self.config.current = i;
+        self.config.wallpaper = Some(output);
+        self.save();
+        self.clean_cache();
+        self.rearm_timer();
+        true
+    }
+
+    /// Switches to the next ready video, in order or shuffled.
+    fn next_video(&mut self) {
+        self.switch_due = false;
+        let ready = self.ready_list();
+        let random = self.rng.next();
+        match playlist::next(self.config.current, &ready, self.config.shuffle, random) {
+            Some(i) => {
+                self.play_index(i);
+            }
+            None => {
+                log!("playlist: no other video ready");
+                if let Some(p) = &self.player {
+                    p.continue_after_loop();
+                }
+                self.rearm_timer();
+            }
+        }
+    }
+
+    /// With several videos ready, times the next switch. The timer is
+    /// one-shot and re-armed only after a switch, so a paused wallpaper
+    /// wakes at most once per interval.
+    fn ensure_timer(&mut self) {
+        let ready = self.ready_list().into_iter().filter(|&r| r).count();
+        if !self.persist || self.player.is_none() || ready < 2 {
+            if self.timer_armed {
+                self.host.kill_switch_timer();
+                self.timer_armed = false;
+            }
+            self.switch_due = false;
+            return;
+        }
+        if !self.timer_armed {
+            let ms = self.config.switch_minutes.saturating_mul(60_000);
+            self.host.set_switch_timer(ms);
+            self.timer_armed = true;
+        }
+    }
+
+    fn rearm_timer(&mut self) {
+        self.timer_armed = false;
+        self.switch_due = false;
+        self.ensure_timer();
+    }
+
+    /// Queues imports for chosen videos that have none yet (the current one
+    /// first, then in the chosen order) and starts one if none is running.
+    fn ensure_imports(&mut self) {
+        let Some(size) = self.size else { return };
+        if self.fixed_video.is_some() {
+            return;
+        }
+        let n = self.config.sources.len();
+        for i in std::iter::once(self.config.current).chain(0..n) {
+            let Some(source) = self.config.sources.get(i) else {
+                continue;
+            };
+            let waiting =
+                self.import_queue.contains(source) || self.importing.as_ref() == Some(source);
+            if waiting || self.failed.contains(source) {
+                continue;
+            }
+            if config::cache_file(source, size).is_some_and(|p| !p.is_file()) {
+                self.import_queue.push_back(source.clone());
+            }
+        }
+        self.import_next();
+    }
+
+    /// Imports run one at a time: each is CPU / GPU heavy, and the first
+    /// chosen video should be ready first.
+    fn import_next(&mut self) {
+        let Some(size) = self.size else { return };
+        while self.importing.is_none()
+            && let Some(source) = self.import_queue.pop_front()
+        {
+            if !self.config.sources.contains(&source) {
+                continue;
+            }
+            let Some(output) = config::cache_file(&source, size) else {
+                log!("cannot read {}", source.display());
+                continue;
+            };
+            if output.is_file() {
+                continue;
+            }
+            if let Err(e) = std::fs::create_dir_all(config::cache_dir()) {
+                log!("cannot create the cache folder: {e}");
+                return;
+            }
+            log!(
+                "importing {} for {}x{} -> {}",
+                source.display(),
+                size.0,
+                size.1,
+                output.display()
+            );
+            self.tasks.import(&source, &output, size);
+            if self.tasks.importing() {
+                self.importing = Some(source);
+            } else {
+                self.failed.insert(source);
+            }
+        }
+    }
+
+    /// Deletes imports of videos no longer chosen (just disk space). Keeps
+    /// the file on screen and the temporary files of a running import.
+    fn clean_cache(&self) {
         if !self.persist {
             return;
         }
-        self.config.source = Some(source);
-        self.config.wallpaper = Some(output.clone());
-        self.save();
-        // Keep only the current import; old ones are just disk space.
-        if let Ok(entries) = std::fs::read_dir(config::cache_dir()) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path != output && path.extension().is_some_and(|e| e == "mp4") {
-                    let _ = std::fs::remove_file(&path);
-                }
+        let keep: Vec<PathBuf> = match self.size {
+            Some(size) => self
+                .config
+                .sources
+                .iter()
+                .filter_map(|s| config::cache_file(s, size))
+                .collect(),
+            None => Vec::new(),
+        };
+        let Ok(entries) = std::fs::read_dir(config::cache_dir()) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let temporary = name.contains(".part.") || name.contains(".src.");
+            if !temporary
+                && name.ends_with(".mp4")
+                && !keep.contains(&path)
+                && self.playing.as_ref() != Some(&path)
+            {
+                log!("cache: removing {name}");
+                let _ = std::fs::remove_file(&path);
             }
         }
     }
 
     fn on_task(&mut self, done: Done) {
         match done {
-            Done::Picked(Some(source)) => {
-                log!("picked {}", source.display());
-                self.choose(source);
+            Done::Picked(sources) if sources.is_empty() => {
+                log!("picker closed without a choice");
             }
-            Done::Picked(None) => log!("picker closed without a choice"),
+            Done::Picked(sources) => {
+                log!("picked {} video(s)", sources.len());
+                self.choose(sources);
+            }
             Done::Imported {
                 source,
                 output,
-                result: Ok(()),
-            } if output.is_file() => {
-                log!("import finished: {}", output.display());
-                self.switch_to(source, output);
-            }
-            Done::Imported { source, result, .. } => {
-                log!("import of {} failed: {result:?}", source.display());
+                result,
+            } => {
+                self.importing = None;
+                match self.config.sources.iter().position(|s| *s == source) {
+                    None => {
+                        log!("import of {} no longer needed", source.display());
+                        let _ = std::fs::remove_file(&output);
+                    }
+                    Some(i) if result.is_ok() && output.is_file() => {
+                        log!("import finished: {}", output.display());
+                        // Show it at once if the current video is not on
+                        // screen (first import after choosing, or the
+                        // current one cannot be imported).
+                        let current = self.ready(self.config.current);
+                        if current.is_none() || current != self.playing {
+                            self.play_index(i);
+                        } else {
+                            self.ensure_timer();
+                        }
+                    }
+                    Some(_) => {
+                        log!("import of {} failed: {result:?}", source.display());
+                        self.failed.insert(source);
+                    }
+                }
+                self.import_next();
             }
         }
     }
@@ -351,11 +613,30 @@ impl App {
             paused: self.reasons.user,
             pause_on_battery: self.reasons.pause_on_battery,
             autostart,
-            busy: self.tasks.busy(),
+            picking: self.tasks.picking(),
+            videos: if self.persist {
+                self.config.sources.len()
+            } else {
+                0
+            },
+            switch_minutes: self.config.switch_minutes,
+            shuffle: self.config.shuffle,
         };
-        let chosen = shell::show_menu(self.host.hwnd(), &shell::menu(state), Some(at));
+        let items = shell::menu(state, &playlist::SWITCH_CHOICES);
+        let chosen = shell::show_menu(self.host.hwnd(), &items, Some(at));
         match chosen.and_then(Command::from_id) {
             Some(Command::Choose) => self.tasks.pick(),
+            Some(Command::Next) => self.next_video(),
+            Some(Command::SwitchEvery(minutes)) => {
+                log!("playlist: switch every {minutes} min");
+                self.config.switch_minutes = minutes;
+                self.save();
+                self.rearm_timer();
+            }
+            Some(Command::Shuffle) => {
+                self.config.shuffle = !self.config.shuffle;
+                self.save();
+            }
             Some(Command::Pause) => {
                 self.reasons.user = !self.reasons.user;
                 self.config.paused = self.reasons.user;
@@ -416,27 +697,41 @@ impl App {
     }
 
     fn status_text(&self) -> String {
-        if self.tasks.busy() {
-            return "importing video\u{2026}".into();
-        }
+        let imports = self.import_queue.len() + usize::from(self.importing.is_some());
         if self.player.is_none() {
-            return "no video \u{2013} right-click to choose one".into();
+            return if imports > 0 {
+                "importing video\u{2026}".into()
+            } else {
+                "no video \u{2013} right-click to choose".into()
+            };
         }
         let reasons = self.reasons.active();
-        if reasons.is_empty() {
-            let name = self
-                .config
-                .source
-                .as_deref()
-                .or(self.fixed_video.as_deref())
-                .and_then(Path::file_name)
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            format!("playing {name}")
-        } else {
+        let text = if !reasons.is_empty() {
             format!("paused ({})", reasons.join(", "))
+        } else if self.persist {
+            let n = self.config.sources.len();
+            let name = file_name(self.config.sources.get(self.config.current));
+            if n > 1 {
+                format!("playing {}/{n}: {name}", self.config.current + 1)
+            } else {
+                format!("playing {name}")
+            }
+        } else {
+            format!("playing {}", file_name(self.fixed_video.as_ref()))
+        };
+        if imports > 0 {
+            // First, so the tooltip's length limit cuts the file name instead.
+            format!("importing {imports}\u{2026}\n{text}")
+        } else {
+            text
         }
     }
+}
+
+fn file_name(path: Option<&PathBuf>) -> String {
+    path.and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 #[derive(Default)]

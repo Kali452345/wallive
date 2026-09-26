@@ -12,6 +12,7 @@ Track unresolved bugs, limitations, and risky areas here.
 - Windows 10 has no compositor clock; pacing falls back to `Present(n)`, which DWM may throttle (see `logs/errors.md`). Untested.
 - Exclusive-fullscreen games, Battery / Energy Saver toggles, battery power and session lock pause are implemented but not verified on hardware.
 - New tray icons land in the Windows 11 overflow (^) area; users have to drag the icon to the taskbar to keep it visible.
+- Several videos (ADR-012): a switch waits for the current video's loop end, so a video longer than the interval plays to its end first. "Choose videos..." replaces the whole list (no add / remove of single videos). Imports are made for the screen size at the first attach or the last choice; after a monitor change, restarting re-imports every video in the list for the new size.
 - A classic desktop that never answers `0x052C` shows no wallpaper (by design - we do not draw over the icons). No user-visible message yet.
 
 ## Resolved

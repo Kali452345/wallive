@@ -18,8 +18,8 @@ const IMPORT_FLAGS: u32 = 0x0800_0000 | 0x0000_4000;
 
 #[derive(Debug)]
 pub enum Done {
-    /// The picker closed; `None` when cancelled.
-    Picked(Option<PathBuf>),
+    /// The picker closed; empty when cancelled.
+    Picked(Vec<PathBuf>),
     Imported {
         source: PathBuf,
         output: PathBuf,
@@ -33,7 +33,8 @@ pub struct Tasks {
     job: Option<Arc<ChildJob>>,
     tx: Sender<Done>,
     rx: Receiver<Done>,
-    running: usize,
+    picking: bool,
+    imports: usize,
 }
 
 impl Tasks {
@@ -49,18 +50,30 @@ impl Tasks {
             job,
             tx,
             rx,
-            running: 0,
+            picking: false,
+            imports: 0,
         }
     }
 
-    pub fn busy(&self) -> bool {
-        self.running > 0
+    /// The file dialog is open.
+    pub fn picking(&self) -> bool {
+        self.picking
+    }
+
+    /// An import is running.
+    pub fn importing(&self) -> bool {
+        self.imports > 0
     }
 
     /// Results that arrived since the last call.
     pub fn finished(&mut self) -> Vec<Done> {
         let done: Vec<Done> = self.rx.try_iter().collect();
-        self.running = self.running.saturating_sub(done.len());
+        for d in &done {
+            match d {
+                Done::Picked(_) => self.picking = false,
+                Done::Imported { .. } => self.imports = self.imports.saturating_sub(1),
+            }
+        }
         done
     }
 
@@ -68,9 +81,18 @@ impl Tasks {
         let mut cmd = Command::new(&self.exe);
         cmd.arg("--pick").stdout(Stdio::piped());
         crate::shell::allow_foreground();
-        self.spawn("picker", cmd, |output| {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            Done::Picked((output.status.success() && !path.is_empty()).then(|| path.into()))
+        self.picking = self.spawn("picker", cmd, |output| {
+            let paths = if output.status.success() {
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .map(PathBuf::from)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            Done::Picked(paths)
         });
     }
 
@@ -82,7 +104,7 @@ impl Tasks {
             .arg(format!("{}x{}", size.0, size.1))
             .creation_flags(IMPORT_FLAGS);
         let (source, output) = (source.to_path_buf(), output.to_path_buf());
-        self.spawn("import", cmd, move |out| Done::Imported {
+        let started = self.spawn("import", cmd, move |out| Done::Imported {
             source,
             output,
             result: if out.status.success() {
@@ -91,6 +113,9 @@ impl Tasks {
                 Err(format!("import exited with {}", out.status))
             },
         });
+        if started {
+            self.imports += 1;
+        }
     }
 
     fn spawn(
@@ -98,7 +123,7 @@ impl Tasks {
         name: &'static str,
         mut cmd: Command,
         finish: impl FnOnce(std::process::Output) -> Done + Send + 'static,
-    ) {
+    ) -> bool {
         // Children log into our log file, or our stderr when there is none.
         match crate::log_file_clone() {
             Some(file) => cmd.stderr(file),
@@ -108,7 +133,7 @@ impl Tasks {
             Ok(child) => child,
             Err(e) => {
                 crate::log!("tasks: {name} failed to start: {e}");
-                return;
+                return false;
             }
         };
         if let Some(job) = &self.job {
@@ -133,8 +158,11 @@ impl Tasks {
                 }
             });
         match spawned {
-            Ok(_) => self.running += 1,
-            Err(e) => crate::log!("tasks: {name} waiter failed to start: {e}"),
+            Ok(_) => true,
+            Err(e) => {
+                crate::log!("tasks: {name} waiter failed to start: {e}");
+                false
+            }
         }
     }
 }

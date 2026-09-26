@@ -138,3 +138,32 @@ Read `logs/handoff.md`. Start the playback spike in the attached surface window.
 ### Remaining
 
 - RAM while playing is still 81 MB private (62.6 MB of it GPU surfaces). Next candidates: NV12 composition swap chain (~10 MB), decoder pool size.
+
+## 2026-09-26 - README for testers; several videos (playlist)
+
+### Changed
+
+- `README.md`, `LICENSE` (MIT), `.github/` issue forms (bug, test report) and PR template: what is tested and what is not (multi-monitor, 4K, Windows 10, NVIDIA / AMD), how to report and contribute (commit `2900f11`).
+- Several videos take turns (ADR-012):
+  - `src/config/mod.rs`: `source=` list, `current`, `switch_minutes`, `shuffle`; reads older one-video configs.
+  - `src/runtime/playlist.rs`: next index in order or shuffled (xorshift).
+  - `src/runtime/mod.rs`: import queue (one at a time, current first), cache cleanup for videos no longer chosen, one-shot switch timer, switch at loop end, Next video / Switch every / Shuffle handlers, tooltip "playing i/n".
+  - `src/runtime/ffi.rs`: `SWITCH_TIMER`, `Event::SwitchDue`, multi-path `WM_COPYDATA`, dropping a stale queued `SwitchDue`.
+  - `src/runtime/tasks.rs`: picker returns several paths; picking and import state tracked separately.
+  - `src/playback/mod.rs`: `notify_at_loop_end` / `MEDIA_LOOPED` / `continue_after_loop`.
+  - `src/shell/`: menu model with a submenu (Choose videos..., Next video, Switch every > 1 / 5 / 15 / 30 / 60 min, Shuffle), multi-select picker, several paths to a running copy.
+  - `src/main.rs`: `wallive <video> [<video> ...]`; `--pick` prints one path per line.
+
+### Verification
+
+- build / clippy / fmt / 70 tests pass.
+- Real tray app (`logs/experiments.md`):
+  - `wallive clip Red-Eye Rimuru` showed the imported Red Eye at once, imported the other two one at a time, and switched at the loop end after the 1 min timer (first frame of the next video ~0.2 s after the old one's last frame, which stays on screen).
+  - Next video, Shuffle and the Switch every submenu were clicked in the real menu. A restart resumed from the config.
+  - A 2-video list sent to the running copy replaced the list and deleted the unused import. The picker returned two files.
+- Found and fixed: a stale timer event after "Next video" (`logs/errors.md`).
+
+### Remaining
+
+- Multi-monitor / 4K / Windows 10 still untested (README asks testers).
+- RAM while playing (81-85 MB private at 1080p).

@@ -347,6 +347,62 @@ Two pause cycles: paused 29 MB private, resumed 81 MB (same as a fresh start).
 
 RESOLVED
 
+## Stale playlist switch after "Next video"
+
+### Date
+
+2026-09-26
+
+### Area
+
+Playlist timer (`src/runtime/ffi.rs`, `src/runtime/mod.rs`), ADR-012.
+
+### Symptoms
+
+With the tray menu open, the switch timer fired. After choosing "Next video", the new 10 s clip was marked to switch again at its first loop end: the log showed `playlist: switching at the end of this loop` 30 ms after `playlist: video 1/3`.
+
+### Root Cause
+
+`TrackPopupMenuEx` runs a modal loop that still dispatches `WM_TIMER`, and the window procedure queued `Event::SwitchDue`. The app handles queued events only after the menu call returns. By then the menu choice had switched videos and re-armed the timer, but the stale event was still in the queue.
+
+### Working Fix
+
+`Host::set_switch_timer` / `kill_switch_timer` also remove a queued `SwitchDue` (`drop_pending`). The loop pops events one at a time, so a handler can remove later ones.
+
+### Verification
+
+Rebuilt; later switches in the real tray app happen only at the first loop end after the timer (`logs/experiments.md`).
+
+### Status
+
+RESOLVED
+
+## Test script keys went to the terminal
+
+### Date
+
+2026-09-26
+
+### Area
+
+Scratch test scripts for the tray menu.
+
+### Symptoms
+
+Arrow / Enter keys sent with `keybd_event` after opening the tray menu from a script did not move through the menu. The menu stayed open.
+
+### Root Cause
+
+The menu is opened by a posted tray message. `SetForegroundWindow` from the background wallive process does not get the foreground, so keyboard input went to the foreground window (Windows Terminal). Posting `WM_CANCELMODE` to the owner window did not close the menu.
+
+### Working Fix
+
+Use a mouse click on the item. The menu `#32768` window rect (owned by the wallive pid) gives the item positions; clicking an item or outside the menu closes it. The cursor is put back afterwards.
+
+### Status
+
+RESOLVED (test scripts only)
+
 ## Template
 
 ### Date

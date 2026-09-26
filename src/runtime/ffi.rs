@@ -53,15 +53,18 @@ pub enum Event {
     },
     /// A background task (picker / import child process) finished.
     TaskDone,
-    /// Another `wallive <video>` asked us to show a video.
+    /// Another `wallive <video> ...` asked us to show these videos.
     OpenRequested,
+    /// Time to move on to the next video of the playlist.
+    SwitchDue,
 }
 
 /// Tray icon callback message.
 pub const WM_TRAY: u32 = WM_APP + 3;
 /// Posted by task threads when they have queued a result.
 const WM_TASK_DONE: u32 = WM_APP + 4;
-/// `WM_COPYDATA` tag for "open this video" (UTF-16 path, no terminator).
+/// `WM_COPYDATA` tag for "open these videos" (UTF-16 paths separated by
+/// `\n`, no terminator).
 pub const COPYDATA_OPEN: usize = 0x5741_4C4C; // "WALL"
 /// `NOTIFYICON_VERSION_4` click notifications (`NIN_SELECT`, `NIN_KEYSELECT`).
 const NIN_SELECT: u32 = 0x400;
@@ -72,6 +75,8 @@ const NIN_KEYSELECT: u32 = 0x401;
 /// uncovering the desktop resumes playback without a noticeable delay.
 pub const SETTLE_MS: u32 = 200;
 const SETTLE_TIMER: usize = 1;
+/// One-shot timer for the next playlist switch.
+const SWITCH_TIMER: usize = 2;
 
 const WM_WAKE: u32 = WM_APP + 1;
 
@@ -133,6 +138,13 @@ fn push(event: Event) {
     }
 }
 
+/// Forgets a queued `event` that has not been handled yet. A timer that
+/// fires while the tray menu's modal loop runs is only handled after the
+/// menu closes, possibly after the menu choice already re-armed it.
+fn drop_pending(event: Event) {
+    QUEUE.with_borrow_mut(|q| q.retain(|e| *e != event));
+}
+
 pub fn win_event_count() -> u64 {
     WIN_EVENTS.load(Ordering::Relaxed)
 }
@@ -156,6 +168,14 @@ unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 let _ = KillTimer(Some(hwnd), SETTLE_TIMER);
             }
             push(Event::WindowsSettled);
+            return LRESULT(0);
+        }
+        WM_TIMER if wp.0 == SWITCH_TIMER => {
+            // SAFETY: our own timer on our own window; one-shot.
+            unsafe {
+                let _ = KillTimer(Some(hwnd), SWITCH_TIMER);
+            }
+            push(Event::SwitchDue);
             return LRESULT(0);
         }
         WM_POWERBROADCAST if wp.0 as u32 == PBT_POWERSETTINGCHANGE => {
@@ -187,19 +207,23 @@ unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             let data = lp.0 as *const windows::Win32::System::DataExchange::COPYDATASTRUCT;
             // SAFETY: for WM_COPYDATA, lParam points at a COPYDATASTRUCT whose
             // buffer (cbData bytes) is valid while the message is handled.
-            let path = unsafe {
+            let text = unsafe {
                 data.as_ref().and_then(|d| {
                     (d.dwData == COPYDATA_OPEN && !d.lpData.is_null()).then(|| {
                         let units = std::slice::from_raw_parts(
                             d.lpData.cast::<u16>(),
                             d.cbData as usize / 2,
                         );
-                        PathBuf::from(String::from_utf16_lossy(units))
+                        String::from_utf16_lossy(units)
                     })
                 })
             };
-            if let Some(path) = path {
-                OPEN_REQUESTS.with_borrow_mut(|r| r.push(path));
+            if let Some(text) = text {
+                let paths = text
+                    .split('\n')
+                    .filter(|l| !l.is_empty())
+                    .map(PathBuf::from);
+                OPEN_REQUESTS.with_borrow_mut(|r| r.extend(paths));
                 push(Event::OpenRequested);
                 return LRESULT(1);
             }
@@ -242,6 +266,24 @@ impl Host {
         // SAFETY: posting to our own window.
         unsafe {
             let _ = PostMessageW(Some(self.0), WM_CLOSE, WPARAM(0), LPARAM(0));
+        }
+    }
+
+    /// (Re)arms the one-shot playlist timer; [`Event::SwitchDue`] follows
+    /// after `ms` unless it is re-armed or killed first.
+    pub fn set_switch_timer(&self, ms: u32) {
+        drop_pending(Event::SwitchDue);
+        // SAFETY: our own window; an existing timer with this id is replaced.
+        unsafe {
+            SetTimer(Some(self.0), SWITCH_TIMER, ms, None);
+        }
+    }
+
+    pub fn kill_switch_timer(&self) {
+        drop_pending(Event::SwitchDue);
+        // SAFETY: our own window; fails harmlessly if the timer is not set.
+        unsafe {
+            let _ = KillTimer(Some(self.0), SWITCH_TIMER);
         }
     }
 

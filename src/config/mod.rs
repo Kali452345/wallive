@@ -4,15 +4,39 @@
 
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
-    /// The video the user chose.
-    pub source: Option<PathBuf>,
-    /// The imported, playable copy of `source` in the cache.
+    /// The videos the user chose (`source=` lines, in order). One video
+    /// just loops; several take turns.
+    pub sources: Vec<PathBuf>,
+    /// Index into `sources` of the video last shown.
+    pub current: usize,
+    /// The imported, playable copy of the current video in the cache (so
+    /// start-up can show it without looking at the sources).
     pub wallpaper: Option<PathBuf>,
+    /// Minutes between videos when there are several.
+    pub switch_minutes: u32,
+    /// Random order instead of the chosen order.
+    pub shuffle: bool,
     /// Paused from the tray menu.
     pub paused: bool,
     pub pause_on_battery: bool,
+}
+
+pub const DEFAULT_SWITCH_MINUTES: u32 = 5;
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            sources: Vec::new(),
+            current: 0,
+            wallpaper: None,
+            switch_minutes: DEFAULT_SWITCH_MINUTES,
+            shuffle: false,
+            paused: false,
+            pause_on_battery: false,
+        }
+    }
 }
 
 fn flag(v: &str) -> bool {
@@ -39,33 +63,49 @@ impl Config {
                 continue;
             };
             match key.trim() {
-                "source" => c.source = path(value),
+                "source" => c.sources.extend(path(value)),
+                "current" => c.current = value.trim().parse().unwrap_or(0),
                 "wallpaper" => c.wallpaper = path(value),
+                "switch_minutes" => {
+                    c.switch_minutes = value
+                        .trim()
+                        .parse()
+                        .ok()
+                        .filter(|&m| m > 0)
+                        .unwrap_or(DEFAULT_SWITCH_MINUTES)
+                }
+                "shuffle" => c.shuffle = flag(value),
                 "paused" => c.paused = flag(value),
                 "pause_on_battery" => c.pause_on_battery = flag(value),
                 _ => {}
             }
         }
+        if c.current >= c.sources.len() {
+            c.current = 0;
+        }
         c
     }
 
     pub fn serialize(&self) -> String {
-        let p = |v: &Option<PathBuf>| {
-            v.as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default()
-        };
-        format!(
-            "# Wallive settings\n\
-             source={}\n\
-             wallpaper={}\n\
+        let mut out = String::from("# Wallive settings\n");
+        for source in &self.sources {
+            out += &format!("source={}\n", source.display());
+        }
+        let wallpaper = self
+            .wallpaper
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        out += &format!(
+            "current={}\n\
+             wallpaper={wallpaper}\n\
+             switch_minutes={}\n\
+             shuffle={}\n\
              paused={}\n\
              pause_on_battery={}\n",
-            p(&self.source),
-            p(&self.wallpaper),
-            self.paused,
-            self.pause_on_battery
-        )
+            self.current, self.switch_minutes, self.shuffle, self.paused, self.pause_on_battery
+        );
+        out
     }
 
     /// Reads the config; a missing or unreadable file gives the defaults.
@@ -148,8 +188,14 @@ mod tests {
     #[test]
     fn round_trip() {
         let c = Config {
-            source: Some(PathBuf::from(r"C:\Videos\a=b.mp4")),
+            sources: vec![
+                PathBuf::from(r"C:\Videos\a=b.mp4"),
+                PathBuf::from(r"E:\clips\rain.webm"),
+            ],
+            current: 1,
             wallpaper: Some(PathBuf::from(r"C:\cache\0123.mp4")),
+            switch_minutes: 15,
+            shuffle: true,
             paused: true,
             pause_on_battery: false,
         };
@@ -159,17 +205,34 @@ mod tests {
     #[test]
     fn tolerant_parse() {
         let c = Config::parse(
-            "# comment\n\n  paused = yes \nunknown=1\nno equals sign\nsource=\npause_on_battery=ON\r\n",
+            "# comment\n\n  paused = yes \nunknown=1\nno equals sign\nsource=\npause_on_battery=ON\r\nswitch_minutes=0\ncurrent=x\n",
         );
         assert_eq!(
             c,
             Config {
-                source: None,
-                wallpaper: None,
                 paused: true,
                 pause_on_battery: true,
+                ..Default::default()
             }
         );
+    }
+
+    #[test]
+    fn single_video_config_from_older_builds() {
+        let c = Config::parse("source=C:\\v.mp4\nwallpaper=C:\\c.mp4\npaused=false\n");
+        assert_eq!(c.sources, vec![PathBuf::from(r"C:\v.mp4")]);
+        assert_eq!(c.wallpaper, Some(PathBuf::from(r"C:\c.mp4")));
+        assert_eq!(c.current, 0);
+        assert_eq!(c.switch_minutes, DEFAULT_SWITCH_MINUTES);
+        assert!(!c.shuffle);
+    }
+
+    #[test]
+    fn current_out_of_range_resets() {
+        let c = Config::parse("source=a.mp4\nsource=b.mp4\ncurrent=5\n");
+        assert_eq!(c.current, 0);
+        let c = Config::parse("source=a.mp4\nsource=b.mp4\ncurrent=1\n");
+        assert_eq!(c.current, 1);
     }
 
     #[test]

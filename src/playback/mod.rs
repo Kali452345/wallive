@@ -11,7 +11,7 @@ mod ffi;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering};
 use std::thread::JoinHandle;
 
 use windows::Win32::Foundation::{HWND, RECT};
@@ -23,6 +23,11 @@ pub use ffi::{WM_MEDIA_EVENT, create_device};
 pub const MEDIA_PLAYING: u32 = 1;
 /// `lParam` is the failing HRESULT; the video thread has stopped.
 pub const MEDIA_ERROR: u32 = 2;
+/// The video reached its end after [`Player::notify_at_loop_end`]; the
+/// thread holds the last frame for up to [`LOOP_HOLD_MS`] so the UI can
+/// open the next video, then loops.
+pub const MEDIA_LOOPED: u32 = 3;
+const LOOP_HOLD_MS: u32 = 1000;
 
 /// A wallpaper window to show the video in, with its size in pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +48,8 @@ struct Control {
     signal: ffi::Signal,
     /// Timestamp of the last decoded frame (100 ns), to resume after restart.
     position: AtomicI64,
+    /// Post [`MEDIA_LOOPED`] at the next end of the video.
+    loop_notice: AtomicBool,
 }
 
 impl Control {
@@ -69,6 +76,8 @@ pub struct Player {
     paused: bool,
     /// Where the next video thread starts (100 ns).
     position: i64,
+    /// A [`MEDIA_LOOPED`] notice is wanted (survives thread restarts).
+    loop_notice: bool,
 }
 
 impl Player {
@@ -87,6 +96,7 @@ impl Player {
             worker: None,
             paused: false,
             position: 0,
+            loop_notice: false,
         })
     }
 
@@ -96,7 +106,25 @@ impl Player {
         self.stop_worker();
         self.video = Some(path.to_path_buf());
         self.position = 0;
+        self.loop_notice = false;
         self.restart();
+    }
+
+    /// Asks for one [`MEDIA_LOOPED`] event when the video next reaches its
+    /// end, which is where a playlist switches without cutting a scene.
+    pub fn notify_at_loop_end(&mut self) {
+        self.loop_notice = true;
+        if let Some(worker) = &self.worker {
+            worker.control.loop_notice.store(true, Ordering::Release);
+        }
+    }
+
+    /// After [`MEDIA_LOOPED`] when no other video is opened: loop now instead
+    /// of waiting out the hold.
+    pub fn continue_after_loop(&self) {
+        if let Some(worker) = &self.worker {
+            worker.control.signal.set();
+        }
     }
 
     /// Replaces the set of wallpaper windows (after attach / re-attach).
@@ -130,6 +158,7 @@ impl Player {
         match event {
             MEDIA_PLAYING => crate::log!("playback: first frame presented"),
             MEDIA_ERROR => crate::log!("playback: stopped on error 0x{:08X}", param as u32),
+            MEDIA_LOOPED => self.loop_notice = false,
             _ => {}
         }
     }
@@ -191,6 +220,7 @@ impl Player {
             state: AtomicU8::new(if self.paused { PAUSE } else { RUN }),
             signal,
             position: AtomicI64::new(self.position),
+            loop_notice: AtomicBool::new(self.loop_notice),
         });
         let job = Job {
             device: self.device.clone(),
@@ -335,6 +365,16 @@ impl Job {
                     ));
                 }
                 frames_since_rewind = 0;
+                if self.control.loop_notice.swap(false, Ordering::AcqRel) {
+                    // The last frame stays on screen while the UI decides;
+                    // opening another video stops this thread (STOP is
+                    // checked at the top of the loop).
+                    ffi::post(self.host, MEDIA_LOOPED, 0);
+                    self.control.signal.wait_for(LOOP_HOLD_MS);
+                    if self.control.state.load(Ordering::Acquire) == STOP {
+                        return Ok(Exit::Stop);
+                    }
+                }
                 reader.seek(0)?;
                 continue;
             };

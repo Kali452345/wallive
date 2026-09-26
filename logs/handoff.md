@@ -2,11 +2,11 @@
 
 ## Current Branch
 
-`spike/desktop-attach` (branched from `main` at `e176c41`). Checkpoints: `5a4de53` attach spike, `5a89838` Media Engine spike, `2472626` playback backend 2, `11ed5bf` pause policy, `3ef87a7` app shell, `892ab1c` owner-reported fixes. Not merged yet.
+`spike/desktop-attach` (branched from `main` at `e176c41`). Checkpoints: `5a4de53` attach spike, `5a89838` Media Engine spike, `2472626` playback backend 2, `11ed5bf` pause policy, `3ef87a7` app shell, `892ab1c` owner-reported fixes, `2900f11` README / license / issue forms, `HASH` several videos (playlist). Not merged yet.
 
 ## Last Verified Build
 
-2026-09-26: `cargo build --release`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test` (63 passed). rustc 1.98.1 MSVC, `windows` 0.62.2. `cargo` is not on PATH in agent shells: prepend `C:\Users\KaliOxygen\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin`.
+2026-09-26: `cargo build --release`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test` (70 passed). rustc 1.98.1 MSVC, `windows` 0.62.2. `cargo` is not on PATH in agent shells: prepend `E:\DevTools\cargo\bin` (the user's `CARGO_HOME`), or `C:\Users\KaliOxygen\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin`.
 
 ## Current Phase
 
@@ -14,8 +14,9 @@ All planned features exist and run on the Windows 11 raised desktop. Remaining: 
 
 ## Working Features
 
-- `wallive` (tray app): plays the saved wallpaper, or asks for a video on first run. `wallive <video>`: import (child process) + play, or hand the path to the running instance. `wallive --quit`.
-- Tray menu: Choose video..., Pause, Pause on battery, Start with Windows, Quit. Tooltip shows the state / pause reason.
+- `wallive` (tray app): plays the saved wallpaper, or asks for videos on first run. `wallive <video> [<video> ...]`: import (child processes, one at a time) + play, or hand the paths to the running instance. `wallive --quit`.
+- Several videos take turns (ADR-012): switch every 1 / 5 / 15 / 30 / 60 min at the video's loop end, in order or shuffled; Next video switches at once.
+- Tray menu: Choose videos..., Next video, Switch every >, Shuffle (the last three only with 2+ videos), Pause, Pause on battery, Start with Windows, Quit. Tooltip shows the state / pause reason / `i/n`.
 - Video behind the desktop icons on every monitor, hardware decode, ~0.9% of the CPU for 1080p30 on AC (~1.2% on battery). Reads come from the file cache (no SSD reads after the first loop).
 - Imports handle fragmented (DASH / YouTube) MP4 with edit lists.
 - Re-attach after Explorer restart and display changes.
@@ -34,18 +35,19 @@ All planned features exist and run on the Windows 11 raised desktop. Remaining: 
 - Multi-monitor untested (one monitor here).
 - Unverified pause triggers: exclusive-fullscreen game, saver toggles, battery, session lock.
 - Windows 11 puts the tray icon in the overflow (^) area by default.
+- Playlist: a video longer than the interval plays to its end before switching; after a monitor change, a restart re-imports every chosen video.
 
 ## Last Change
 
-Owner-reported fixes: video switch position bug, fragmented-MP4 import, buffered file stream (no SSD reads per loop), low-latency decoding, decoder release after 10 s of pause, encoder without B-frames and with 1 s key frames. `logs/errors.md`, `logs/experiments.md`, ADR-003 / ADR-004 updates.
+Several videos (ADR-012): multi-select picker and CLI, import queue, one-shot switch timer, switch at loop end, Next video / Switch every / Shuffle in the tray menu. Before that: README for testers, MIT license, issue forms (`2900f11`).
 
 ## Last Test
 
-Real tray app on battery: switch to Red Eye plays; DASH `videoplayback.mp4` imports and plays; disk and memory A/B runs; two pause/release/resume cycles; `bench.ps1 -Attach` 60 s (`logs/experiments.md`).
+Real tray app: 3-video list via CLI, imports queued, timer + loop-end switches, Next / Shuffle / Switch every clicked in the menu, restart resume, 2-video list sent to the running copy, picker returning 2 files, memory over repeated switches (`logs/experiments.md`).
 
 ## Machine State Left Behind
 
-- The tray app is running with the owner's "Anime Red Eye" wallpaper (imported before the 1 s key-frame change).
+- The tray app is running with the owner's config restored (one video, "Anime Red Eye").
 - HKCU Run value `Wallive` is not set (Start with Windows off).
 
 ## Known Blockers

@@ -218,3 +218,38 @@ The changes do not cost CPU. Absolute numbers are higher than the earlier 6.4% (
 ### Import encoder
 
 `CODECAPI_AVEncMPVDefaultBPictureCount = 0` and `CODECAPI_AVEncMPVGOPSize = fps` accepted by this machine's encoder: key frames every 30 frames (was 128), no `ctts` box (no B-frames, as before).
+
+## 2026-09-26 - Several videos (playlist, ADR-012)
+
+Tray app, Win11 26200, Intel iGPU, 1920x1080 @ 60.05 Hz, `switch_minutes=1`. Videos: a synthetic 10 s 720p30 clip, the owner's "Anime Red Eye" (1080p30 import) and "Rimuru Tempest - Demon Suit" (1080p60 source, 3500 frames = 117 s imported at 30 fps).
+
+### Switch timing (from `wallive.log`)
+
+| Event | Time |
+|---|---|
+| timer fired, loop-end notice requested | 129.008 s |
+| Red Eye reached its end, next video opened | 131.726 s |
+| first frame of the next video | 131.941 s (0.215 s later; the old last frame stays on screen) |
+
+- A video longer than the interval plays to its end. Rimuru played its whole 117 s loop (113.1 s to 230.4 s) although the timer fired at 173.1 s.
+- Other switches showed their first frame 0.16-0.22 s after the open.
+- Order with 3 videos, shuffle on: 2 -> 3 -> 2 -> 3 -> 1 (never the same video twice in a row). In order (before shuffle was turned on): 2 -> 3, then Next video: 3 -> 1.
+
+### Cost
+
+`tools/bench.ps1 -Attach` 155 s spanning two switches, 3 videos: cpu1 11.02%, cpuAll 1.377%, WS 111.8 MB, private 85.5 MB, 9 threads, GPU decode 7.2% + processing 9.0%. Single video for comparison (same machine, battery, earlier entry): cpuAll 1.219%, private 81.5 MB. The difference is the Rimuru content and the switch reopen.
+
+Memory over 12 switches (2 videos, 1 min, 30 s samples for 12 min):
+
+| Playing | Private | Working set | Handles | Threads |
+|---|---|---|---|---|
+| 720p clip | 64.7-65.8 MB | 80.6-92.5 MB | 539-546 | 9-11 |
+| 1080p Red Eye | 81.7-83.0 MB (one 88.3 sample during a switch) | 103.8-114.7 MB | 539-546 | 9-11 |
+
+No growth across switches: each switch drops the old reader and decoder before opening the next. Decoder memory follows the video size, so smaller imports cost less.
+
+Paused: the timer fires at most once per interval (one `WM_TIMER`), and the switch waits until playback reaches a loop end. There is no decode or reopen while paused.
+
+### Picker
+
+`wallive --pick` driven by script (`WM_SETTEXT` with two quoted paths in the file-name box, then `IDOK`): exit code 0, two paths printed, one per line. Dialog title "Choose videos for the wallpaper (several take turns)".

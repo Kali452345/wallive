@@ -2,7 +2,7 @@
 //!
 //! Usage:
 //!   wallive                                  run from the tray (settings in config.txt)
-//!   wallive <video>                          use <video>; hands it to a running instance
+//!   wallive <video> [<video> ...]            use these videos (several take turns); hands them to a running instance
 //!   wallive --quit                           ask a running instance to exit
 //!   wallive --play <video>                   play <video> as-is, settings untouched (testing)
 //!   wallive --import <src> <dst> <W>x<H>     import child process (ADR-004)
@@ -90,7 +90,7 @@ fn parse_size(s: &str) -> Option<(u32, u32)> {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: wallive [<video> | --quit | --play <video> | --import <src> <dst> <W>x<H> | --pick | --make-test-clip <dst> [<W>x<H>] [fps] [secs] | --bench-decode <video> [loops]]"
+        "usage: wallive [<video>... | --quit | --play <video> | --import <src> <dst> <W>x<H> | --pick | --make-test-clip <dst> [<W>x<H>] [fps] [secs] | --bench-decode <video> [loops]]"
     );
     std::process::exit(2);
 }
@@ -119,7 +119,7 @@ fn main() {
     let result = match first {
         None => run_resident(runtime::Options {
             video: None,
-            open: None,
+            open: Vec::new(),
         }),
         Some("--quit") => {
             if !shell::close_running() {
@@ -131,15 +131,17 @@ fn main() {
             let Some(video) = args.get(1) else { usage() };
             run_resident(runtime::Options {
                 video: Some(PathBuf::from(video)),
-                open: None,
+                open: Vec::new(),
             })
         }
-        Some("--pick") => match shell::pick_video() {
-            Ok(Some(path)) => {
-                println!("{}", path.display());
+        Some("--pick") => match shell::pick_videos() {
+            Ok(paths) if !paths.is_empty() => {
+                for path in paths {
+                    println!("{}", path.display());
+                }
                 Ok(())
             }
-            Ok(None) => std::process::exit(1),
+            Ok(_) => std::process::exit(1),
             Err(e) => Err(e),
         },
         Some("--import") => {
@@ -168,15 +170,18 @@ fn main() {
             transcode::make_test_clip(dst.as_ref(), w, h, fps, secs)
         }
         Some(flag) if flag.starts_with("--") => usage(),
-        // A video path: hand it to the running instance, or start with it.
-        Some(video) => {
-            let video = std::path::absolute(video).unwrap_or_else(|_| PathBuf::from(video));
-            if shell::send_to_running(&video, runtime::COPYDATA_OPEN) {
+        // Video paths: hand them to the running instance, or start with them.
+        Some(_) => {
+            let videos: Vec<PathBuf> = args
+                .iter()
+                .map(|v| std::path::absolute(v).unwrap_or_else(|_| PathBuf::from(v)))
+                .collect();
+            if shell::send_to_running(&videos, runtime::COPYDATA_OPEN) {
                 Ok(())
             } else {
                 run_resident(runtime::Options {
                     video: None,
-                    open: Some(video),
+                    open: videos,
                 })
             }
         }

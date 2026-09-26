@@ -33,16 +33,16 @@ use windows::Win32::System::Registry::{
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::Shell::{
-    FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FileOpenDialog, IFileOpenDialog, NIF_ICON, NIF_MESSAGE,
-    NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICON_VERSION_4,
-    NOTIFYICONDATAW, SIGDN_FILESYSPATH, Shell_NotifyIconW,
+    FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FileOpenDialog, IFileOpenDialog,
+    NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION,
+    NOTIFYICON_VERSION_4, NOTIFYICONDATAW, SIGDN_FILESYSPATH, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     ASFW_ANY, AllowSetForegroundWindow, AppendMenuW, CreateIconIndirect, CreatePopupMenu,
-    DestroyIcon, DestroyMenu, FindWindowW, GetCursorPos, GetSystemMetrics, HICON, ICONINFO,
-    MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, PostMessageW, SM_CXSMICON, SMTO_ABORTIFHUNG,
-    SendMessageTimeoutW, SetForegroundWindow, TPM_BOTTOMALIGN, TPM_NONOTIFY, TPM_RETURNCMD,
-    TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_CLOSE, WM_COPYDATA, WM_NULL,
+    DestroyIcon, DestroyMenu, FindWindowW, GetCursorPos, GetSystemMetrics, HICON, HMENU, ICONINFO,
+    MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, PostMessageW, SM_CXSMICON,
+    SMTO_ABORTIFHUNG, SendMessageTimeoutW, SetForegroundWindow, TPM_BOTTOMALIGN, TPM_NONOTIFY,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_CLOSE, WM_COPYDATA, WM_NULL,
 };
 use windows::core::{BOOL, HSTRING, PCWSTR, w};
 
@@ -164,31 +164,11 @@ impl Drop for Tray {
 /// Shows `items` as a popup menu at `at` (or the cursor) and returns the
 /// chosen item id. Blocks in the menu's modal loop.
 pub fn show_menu(hwnd: HWND, items: &[MenuItem], at: Option<(i32, i32)>) -> Option<u32> {
-    // SAFETY: the menu is created, used and destroyed here; labels are
-    // null-terminated buffers that outlive AppendMenuW, which copies them.
+    // SAFETY: the menu is created, used and destroyed here (destroying it
+    // also destroys its submenus).
     unsafe {
         let menu = CreatePopupMenu().ok()?;
-        for item in items {
-            let _ = match item {
-                MenuItem::Separator => AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null()),
-                MenuItem::Item {
-                    command,
-                    label,
-                    checked,
-                    enabled,
-                } => {
-                    let mut flags = MF_STRING;
-                    if *checked {
-                        flags |= MF_CHECKED;
-                    }
-                    if !*enabled {
-                        flags |= MF_GRAYED;
-                    }
-                    let text = wide(label);
-                    AppendMenuW(menu, flags, *command as usize, PCWSTR(text.as_ptr()))
-                }
-            };
-        }
+        fill_menu(menu, items);
         let (x, y) = at.unwrap_or_else(|| {
             let mut p = POINT::default();
             let _ = GetCursorPos(&mut p);
@@ -207,6 +187,48 @@ pub fn show_menu(hwnd: HWND, items: &[MenuItem], at: Option<(i32, i32)>) -> Opti
         let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
         let _ = DestroyMenu(menu);
         (id.0 > 0).then_some(id.0 as u32)
+    }
+}
+
+fn fill_menu(menu: HMENU, items: &[MenuItem]) {
+    for item in items {
+        // SAFETY: `menu` is a live popup menu; labels are null-terminated
+        // buffers that outlive AppendMenuW, which copies them. A submenu
+        // appended with MF_POPUP is owned (and destroyed) by its parent.
+        let _ = unsafe {
+            match item {
+                MenuItem::Separator => AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null()),
+                MenuItem::Item {
+                    command,
+                    label,
+                    checked,
+                    enabled,
+                } => {
+                    let mut flags = MF_STRING;
+                    if *checked {
+                        flags |= MF_CHECKED;
+                    }
+                    if !*enabled {
+                        flags |= MF_GRAYED;
+                    }
+                    let text = wide(label);
+                    AppendMenuW(menu, flags, command.id() as usize, PCWSTR(text.as_ptr()))
+                }
+                MenuItem::Submenu { label, items } => match CreatePopupMenu() {
+                    Ok(sub) => {
+                        fill_menu(sub, items);
+                        let text = wide(label);
+                        AppendMenuW(
+                            menu,
+                            MF_STRING | MF_POPUP,
+                            sub.0 as usize,
+                            PCWSTR(text.as_ptr()),
+                        )
+                    }
+                    Err(e) => Err(e),
+                },
+            }
+        };
     }
 }
 
@@ -310,10 +332,16 @@ pub fn close_running() -> bool {
     }
 }
 
-/// Hands `video` to a running instance (`WM_COPYDATA`). Returns whether one
-/// accepted it.
-pub fn send_to_running(video: &Path, tag: usize) -> bool {
-    let units: Vec<u16> = video.as_os_str().encode_wide().collect();
+/// Hands `videos` to a running instance (`WM_COPYDATA`, one path per line).
+/// Returns whether one accepted them.
+pub fn send_to_running(videos: &[PathBuf], tag: usize) -> bool {
+    let mut units: Vec<u16> = Vec::new();
+    for (i, video) in videos.iter().enumerate() {
+        if i > 0 {
+            units.push(u16::from(b'\n'));
+        }
+        units.extend(video.as_os_str().encode_wide());
+    }
     let data = COPYDATASTRUCT {
         dwData: tag,
         cbData: (units.len() * 2) as u32,
@@ -361,10 +389,10 @@ pub fn attach_parent_console() {
     }
 }
 
-/// Shows the Windows file-open dialog for a video. Runs in the short-lived
-/// `wallive --pick` child so the shell's dialog DLLs never load into the
-/// resident process.
-pub fn pick_video() -> windows::core::Result<Option<PathBuf>> {
+/// Shows the Windows file-open dialog for one or more videos (empty when
+/// cancelled). Runs in the short-lived `wallive --pick` child so the shell's
+/// dialog DLLs never load into the resident process.
+pub fn pick_videos() -> windows::core::Result<Vec<PathBuf>> {
     // SAFETY: first COM call on this thread of the picker process; the
     // dialog needs an STA.
     unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) }.ok()?;
@@ -378,22 +406,31 @@ pub fn pick_video() -> windows::core::Result<Option<PathBuf>> {
             pszSpec: w!("*.*"),
         },
     ];
-    // SAFETY: standard IFileOpenDialog use; the returned path string is
+    // SAFETY: standard IFileOpenDialog use; each returned path string is
     // copied and then freed with CoTaskMemFree as documented.
     unsafe {
         let dialog: IFileOpenDialog =
             CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
         dialog.SetFileTypes(&filters)?;
-        dialog.SetTitle(&HSTRING::from("Choose a video for the wallpaper"))?;
-        dialog.SetOptions(dialog.GetOptions()? | FOS_FILEMUSTEXIST | FOS_FORCEFILESYSTEM)?;
+        dialog.SetTitle(&HSTRING::from(
+            "Choose videos for the wallpaper (several take turns)",
+        ))?;
+        dialog.SetOptions(
+            dialog.GetOptions()? | FOS_FILEMUSTEXIST | FOS_FORCEFILESYSTEM | FOS_ALLOWMULTISELECT,
+        )?;
         if dialog.Show(None).is_err() {
-            return Ok(None); // cancelled
+            return Ok(Vec::new()); // cancelled
         }
-        let item = dialog.GetResult()?;
-        let name = item.GetDisplayName(SIGDN_FILESYSPATH)?;
-        let path = name.to_string().map(PathBuf::from);
-        CoTaskMemFree(Some(name.0 as *const _));
-        Ok(path.ok())
+        let results = dialog.GetResults()?;
+        let mut paths = Vec::new();
+        for i in 0..results.GetCount()? {
+            let name = results.GetItemAt(i)?.GetDisplayName(SIGDN_FILESYSPATH)?;
+            if let Ok(path) = name.to_string() {
+                paths.push(PathBuf::from(path));
+            }
+            CoTaskMemFree(Some(name.0 as *const _));
+        }
+        Ok(paths)
     }
 }
 

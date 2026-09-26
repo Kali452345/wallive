@@ -25,15 +25,15 @@ video file ──> transcode/ (probe HW decode -> MF transcode -> cached H.264 N
 Implemented (2026-09-26):
 
 - `Cargo.toml`, `build.rs` + `wallive.exe.manifest` (ADR-009)
-- `src/main.rs`: modes (tray app, `wallive <video>`, `--quit`, `--play`, `--import`, `--pick`, `--make-test-clip`, `--bench-decode`), log macro and log file
-- `src/runtime/`: `App` (owns everything below), hidden host window, message loop, WinEvent hooks (Explorer + window changes), debounce timer, power / session / tray / `WM_COPYDATA` messages; `pause.rs` pause reasons; `tasks.rs` child processes (picker, import) with waiter threads
+- `src/main.rs`: modes (tray app, `wallive <video>...`, `--quit`, `--play`, `--import`, `--pick`, `--make-test-clip`, `--bench-decode`), log macro and log file
+- `src/runtime/`: `App` (owns everything below), hidden host window, message loop, WinEvent hooks (Explorer + window changes), debounce timer, one-shot playlist switch timer, power / session / tray / `WM_COPYDATA` messages; `pause.rs` pause reasons; `playlist.rs` next-video choice (in order / shuffle, ADR-012); `tasks.rs` child processes (picker, import queue) with waiter threads
 - `src/desktop/`: Explorer layout detection (classic WorkerW vs 24H2+ raised desktop), attach, and re-attach on `TaskbarCreated` / `WM_DISPLAYCHANGE`
-- `src/playback/`: D3D11 device, hardware Source Reader, video processor, composition swap chain, one DComp visual per monitor, loop, pause / resume, compositor-clock pacing
+- `src/playback/`: D3D11 device, hardware Source Reader, video processor, composition swap chain, one DComp visual per monitor, loop (with an optional loop-end notice for playlist switches), pause / resume, compositor-clock pacing
 - `src/transcode/`: decoder capability probe and Media Foundation transcode to the cache (runs in a `--import` child)
 - `src/occlusion/`: per-monitor coverage math and window enumeration (ADR-005)
 - `src/power/`: display state, Battery / Energy Saver, AC/DC, session lock / remote, EcoQoS
 - `src/shell/`: tray icon and menu, Start with Windows, single instance, file picker, job object (ADR-011)
-- `src/config/`: `config.txt` in `%APPDATA%\Wallive`, cache paths (ADR-011)
+- `src/config/`: `config.txt` in `%APPDATA%\Wallive` (video list, interval, shuffle, pause settings), cache paths (ADR-011, ADR-012)
 - `tools/bench.ps1` (benchmark mode, ADR-010), `tools/pause-check.ps1`, `tools/inspect-desktop.ps1`
 - `docs/`, `logs/`
 

@@ -3,7 +3,7 @@
 A live video wallpaper for Windows 10 and 11 that tries to cost almost nothing. The video plays behind your desktop icons using the graphics chip's hardware video decoder, and it pauses by itself when you can't see it.
 
 - A small native program (Rust + Win32). No browser engine, no .NET, no bundled FFmpeg.
-- Tray icon only: right-click it to choose a video, pause, or quit.
+- Tray icon only: right-click it to choose videos, pause, or quit.
 - Videos you choose are converted once, in the background, into a format your PC decodes in hardware. Playback then uses the converted copy.
 
 > **Status: early.** It works well on the one machine it was developed on. Many setups have never been tried, and help testing them is very welcome (see [What is tested](#what-is-tested) and [Reporting problems](#reporting-problems)).
@@ -12,6 +12,7 @@ A live video wallpaper for Windows 10 and 11 that tries to cost almost nothing. 
 
 - Video behind the desktop icons; icons, the taskbar and windows stay on top.
 - Same video on every monitor from one shared decoder.
+- **Several videos:** pick more than one (Ctrl+click in the file dialog) and Wallive switches between them every 1 / 5 / 15 / 30 / 60 minutes, in order or shuffled. The switch waits for the current video to reach its end, so no scene is cut; **Next video** in the tray menu switches at once.
 - Pauses automatically when:
   - every monitor is covered by windows;
   - a fullscreen app, game or presentation runs;
@@ -51,6 +52,7 @@ On integrated graphics, video memory is ordinary RAM and is counted in Wallive's
 | Pause for exclusive-fullscreen games, Battery / Energy Saver toggles, on-battery, lock screen | Implemented, **not yet verified** |
 | Explorer restart | **Tested** |
 | Importing MP4 / WebM / 4K 60 fps / vertical YouTube (DASH) videos | **Tested** |
+| Several videos, switching in order / shuffled | **Tested** |
 
 If you have one of the untested setups, trying Wallive and reporting what happens (good or bad) is the most useful contribution right now.
 
@@ -60,7 +62,7 @@ There are no prebuilt downloads yet; build from source:
 
 1. Install [Rust](https://rustup.rs/) (MSVC toolchain) and the Visual Studio Build Tools with the "Desktop development with C++" workload.
 2. `cargo build --release`
-3. Run `target\release\wallive.exe`. On first start it asks for a video. Afterwards, right-click the tray icon.
+3. Run `target\release\wallive.exe`. On first start it asks for videos. Afterwards, right-click the tray icon.
    - Windows 11 may hide new tray icons under the **^** arrow; drag the icon onto the taskbar to keep it visible.
 
 Command line:
@@ -68,7 +70,7 @@ Command line:
 | Command | What it does |
 |---|---|
 | `wallive` | Start (or do nothing if already running) |
-| `wallive <video>` | Use this video (sent to the running copy if there is one) |
+| `wallive <video> [<video> ...]` | Use these videos (sent to the running copy if there is one) |
 | `wallive --quit` | Close the running copy |
 | `wallive --play <video>` | Play a file as-is, without saving settings (testing) |
 | `wallive --bench-decode <video>` | Measure hardware decode speed |

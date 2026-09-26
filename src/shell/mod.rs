@@ -6,31 +6,55 @@ mod ffi;
 
 pub use ffi::{
     Autostart, ChildJob, Icon, SingleInstance, Tray, allow_foreground, attach_parent_console,
-    close_running, pick_video, send_to_running, show_menu,
+    close_running, pick_videos, send_to_running, show_menu,
 };
 
-/// Tray menu commands (menu item ids).
+/// Tray menu commands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u32)]
 pub enum Command {
-    Choose = 1,
-    Pause = 2,
-    PauseOnBattery = 3,
-    Autostart = 4,
-    Quit = 5,
+    Choose,
+    Next,
+    /// Minutes between videos.
+    SwitchEvery(u32),
+    Shuffle,
+    Pause,
+    PauseOnBattery,
+    Autostart,
+    Quit,
 }
 
+const SWITCH_ID_BASE: u32 = 1000;
+
 impl Command {
+    /// Menu item id (non-zero; `TrackPopupMenuEx` returns 0 for "none").
+    pub fn id(self) -> u32 {
+        match self {
+            Self::Choose => 1,
+            Self::Pause => 2,
+            Self::PauseOnBattery => 3,
+            Self::Autostart => 4,
+            Self::Quit => 5,
+            Self::Next => 6,
+            Self::Shuffle => 7,
+            Self::SwitchEvery(minutes) => SWITCH_ID_BASE + minutes,
+        }
+    }
+
     pub fn from_id(id: u32) -> Option<Self> {
+        if id > SWITCH_ID_BASE {
+            return Some(Self::SwitchEvery(id - SWITCH_ID_BASE));
+        }
         [
             Self::Choose,
             Self::Pause,
             Self::PauseOnBattery,
             Self::Autostart,
             Self::Quit,
+            Self::Next,
+            Self::Shuffle,
         ]
         .into_iter()
-        .find(|c| *c as u32 == id)
+        .find(|c| c.id() == id)
     }
 }
 
@@ -38,9 +62,13 @@ impl Command {
 pub enum MenuItem {
     Item {
         command: Command,
-        label: &'static str,
+        label: String,
         checked: bool,
         enabled: bool,
+    },
+    Submenu {
+        label: String,
+        items: Vec<MenuItem>,
     },
     Separator,
 }
@@ -51,28 +79,63 @@ pub struct MenuState {
     pub paused: bool,
     pub pause_on_battery: bool,
     pub autostart: bool,
-    /// A pick or import is running; choosing again is disabled.
-    pub busy: bool,
+    /// The file dialog is open; choosing again is disabled.
+    pub picking: bool,
+    /// How many videos take turns (0 or 1: no playlist items).
+    pub videos: usize,
+    pub switch_minutes: u32,
+    pub shuffle: bool,
 }
 
-pub fn menu(state: MenuState) -> Vec<MenuItem> {
-    let item = |command, label, checked, enabled| MenuItem::Item {
+fn minutes_label(m: u32) -> String {
+    match m {
+        1 => "1 minute".into(),
+        60 => "1 hour".into(),
+        m if m % 60 == 0 => format!("{} hours", m / 60),
+        m => format!("{m} minutes"),
+    }
+}
+
+pub fn menu(state: MenuState, switch_choices: &[u32]) -> Vec<MenuItem> {
+    let item = |command, label: &str, checked, enabled| MenuItem::Item {
         command,
-        label,
+        label: label.to_string(),
         checked,
         enabled,
     };
-    vec![
-        item(
-            Command::Choose,
-            if state.busy {
-                "Importing video\u{2026}"
-            } else {
-                "Choose video\u{2026}"
-            },
-            false,
-            !state.busy,
-        ),
+    let mut items = vec![item(
+        Command::Choose,
+        if state.picking {
+            "Choosing videos\u{2026}"
+        } else {
+            "Choose videos\u{2026}"
+        },
+        false,
+        !state.picking,
+    )];
+    if state.videos >= 2 {
+        items.push(item(Command::Next, "Next video", false, true));
+        let mut choices: Vec<u32> = switch_choices.to_vec();
+        if !choices.contains(&state.switch_minutes) {
+            // A value edited into config.txt still shows as the choice.
+            choices.push(state.switch_minutes);
+            choices.sort_unstable();
+        }
+        items.push(MenuItem::Submenu {
+            label: "Switch every".into(),
+            items: choices
+                .into_iter()
+                .map(|m| MenuItem::Item {
+                    command: Command::SwitchEvery(m),
+                    label: minutes_label(m),
+                    checked: m == state.switch_minutes,
+                    enabled: true,
+                })
+                .collect(),
+        });
+        items.push(item(Command::Shuffle, "Shuffle", state.shuffle, true));
+    }
+    items.extend([
         item(Command::Pause, "Pause", state.paused, true),
         MenuItem::Separator,
         item(
@@ -89,7 +152,8 @@ pub fn menu(state: MenuState) -> Vec<MenuItem> {
         ),
         MenuItem::Separator,
         item(Command::Quit, "Quit", false, true),
-    ]
+    ]);
+    items
 }
 
 /// Tray tooltip, within the shell's 127-character limit.
@@ -173,38 +237,82 @@ mod tests {
     fn command_ids_round_trip() {
         for c in [
             Command::Choose,
+            Command::Next,
+            Command::SwitchEvery(1),
+            Command::SwitchEvery(60),
+            Command::Shuffle,
             Command::Pause,
             Command::PauseOnBattery,
             Command::Autostart,
             Command::Quit,
         ] {
-            assert_eq!(Command::from_id(c as u32), Some(c));
+            assert_ne!(c.id(), 0);
+            assert_eq!(Command::from_id(c.id()), Some(c));
         }
         assert_eq!(Command::from_id(0), None);
+        assert_eq!(Command::from_id(999), None);
+    }
+
+    fn find(items: &[MenuItem], cmd: Command) -> Option<(bool, bool)> {
+        items.iter().find_map(|i| match i {
+            MenuItem::Item {
+                command,
+                checked,
+                enabled,
+                ..
+            } if *command == cmd => Some((*checked, *enabled)),
+            MenuItem::Submenu { items, .. } => find(items, cmd),
+            _ => None,
+        })
     }
 
     #[test]
     fn menu_reflects_state() {
-        let items = menu(MenuState {
-            paused: true,
-            busy: true,
-            ..Default::default()
-        });
-        let find = |cmd| {
-            items.iter().find_map(|i| match i {
-                MenuItem::Item {
-                    command,
-                    checked,
-                    enabled,
-                    ..
-                } if *command == cmd => Some((*checked, *enabled)),
-                _ => None,
-            })
-        };
-        assert_eq!(find(Command::Pause), Some((true, true)));
-        assert_eq!(find(Command::Choose), Some((false, false)));
-        assert_eq!(find(Command::Autostart), Some((false, true)));
-        assert_eq!(find(Command::Quit), Some((false, true)));
+        let items = menu(
+            MenuState {
+                paused: true,
+                picking: true,
+                ..Default::default()
+            },
+            &[1, 5],
+        );
+        assert_eq!(find(&items, Command::Pause), Some((true, true)));
+        assert_eq!(find(&items, Command::Choose), Some((false, false)));
+        assert_eq!(find(&items, Command::Autostart), Some((false, true)));
+        assert_eq!(find(&items, Command::Quit), Some((false, true)));
+        // One video: no playlist items.
+        assert_eq!(find(&items, Command::Next), None);
+        assert_eq!(find(&items, Command::Shuffle), None);
+    }
+
+    #[test]
+    fn playlist_items_with_several_videos() {
+        let items = menu(
+            MenuState {
+                videos: 3,
+                switch_minutes: 5,
+                shuffle: true,
+                ..Default::default()
+            },
+            &[1, 5, 15],
+        );
+        assert_eq!(find(&items, Command::Next), Some((false, true)));
+        assert_eq!(find(&items, Command::Shuffle), Some((true, true)));
+        assert_eq!(find(&items, Command::SwitchEvery(5)), Some((true, true)));
+        assert_eq!(find(&items, Command::SwitchEvery(1)), Some((false, true)));
+        // A hand-edited interval is listed and checked.
+        let items = menu(
+            MenuState {
+                videos: 2,
+                switch_minutes: 7,
+                ..Default::default()
+            },
+            &[1, 5, 15],
+        );
+        assert_eq!(find(&items, Command::SwitchEvery(7)), Some((true, true)));
+        assert_eq!(minutes_label(7), "7 minutes");
+        assert_eq!(minutes_label(60), "1 hour");
+        assert_eq!(minutes_label(1), "1 minute");
     }
 
     #[test]
