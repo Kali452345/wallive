@@ -2,7 +2,7 @@
 
 ## Current Branch
 
-`spike/desktop-attach` (branched from `main` at `e176c41`). Checkpoints: `5a4de53` attach spike, `5a89838` Media Engine spike, `2472626` playback backend 2, `11ed5bf` pause policy, then the app-shell commit ("App shell: tray, config, import integration, autostart, single instance"; `git log -1`). Not merged yet.
+`spike/desktop-attach` (branched from `main` at `e176c41`). Checkpoints: `5a4de53` attach spike, `5a89838` Media Engine spike, `2472626` playback backend 2, `11ed5bf` pause policy, `3ef87a7` app shell. Not merged yet.
 
 ## Last Verified Build
 
