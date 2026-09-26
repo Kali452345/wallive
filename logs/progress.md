@@ -201,6 +201,7 @@ Read `logs/handoff.md`. Start the playback spike in the attached surface window.
 - build / clippy / fmt / 71 tests pass. The ICO reads back with 16 / 32 / 48 / 256 images of the new design. `tools/package.ps1` rebuilt `Wallive-1.0.0-setup.exe`.
 - Cost unchanged: the icon is drawn once at start (a few thousand pixels).
 - Not checked on screen: the display was off, so the tray screenshot was black.
+- Release `v1.0.0` published with the installer and `.sha256`; both downloaded back and checked with `sha256sum -c`. `tools/package.ps1` now writes the `.sha256` with an LF ending (the CRLF version failed `sha256sum -c`); the release asset was replaced with the LF file (same hash).
 
 ### Remaining
 

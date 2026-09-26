@@ -41,5 +41,6 @@ if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
 
 $setup = Join-Path $root "dist\Wallive-$version-setup.exe"
 $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
-"$hash  Wallive-$version-setup.exe" | Set-Content "$setup.sha256" -Encoding ascii
+# LF line ending so `sha256sum -c` (Git Bash, Linux) accepts the file too.
+[IO.File]::WriteAllText("$setup.sha256", "$hash  Wallive-$version-setup.exe`n")
 "{0}  {1:N1} MB  sha256 {2}" -f $setup, ((Get-Item $setup).Length / 1MB), $hash
