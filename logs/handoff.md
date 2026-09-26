@@ -2,11 +2,11 @@
 
 ## Current Branch
 
-`spike/desktop-attach` (branched from `main` at `e176c41`). Checkpoints: `5a4de53` attach spike, `5a89838` Media Engine spike, `2472626` playback backend 2, `11ed5bf` pause policy, `3ef87a7` app shell, `892ab1c` owner-reported fixes, `2900f11` README / license / issue forms, `94a9b31` several videos (playlist). Not merged yet.
+`spike/desktop-attach` (branched from `main` at `e176c41`). Checkpoints: `5a4de53` attach spike, `5a89838` Media Engine spike, `2472626` playback backend 2, `11ed5bf` pause policy, `3ef87a7` app shell, `892ab1c` owner-reported fixes, `2900f11` README / license / issue forms, `94a9b31` several videos (playlist), then v1.0.0 packaging. Merged into `main` and pushed to https://github.com/Kali452345/wallive (public); release `v1.0.0` with the installer. Commit hashes changed when the author email was rewritten before the first push, so older hashes in the logs refer to the local history before the rewrite.
 
 ## Last Verified Build
 
-2026-09-26: `cargo build --release`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test` (70 passed). rustc 1.98.1 MSVC, `windows` 0.62.2. `cargo` is not on PATH in agent shells: prepend `E:\DevTools\cargo\bin` (the user's `CARGO_HOME`), or `C:\Users\KaliOxygen\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin`.
+2026-09-26: `cargo build --release`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test` (71 passed). Installer: `tools/package.ps1` (Inno Setup 6 at `%LOCALAPPDATA%\Programs\Inno Setup 6`). rustc 1.98.1 MSVC, `windows` 0.62.2. `cargo` is not on PATH in agent shells: prepend `E:\DevTools\cargo\bin` (the user's `CARGO_HOME`), or `C:\Users\KaliOxygen\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin`.
 
 ## Current Phase
 
@@ -39,6 +39,9 @@ All planned features exist and run on the Windows 11 raised desktop. Remaining: 
 
 ## Last Change
 
+v1.0.0: Inno Setup installer (per-user, ADR-013), `--version`, CI workflow, changelog, README install section, GitHub repository and release.
+
+Before that: 
 Several videos (ADR-012): multi-select picker and CLI, import queue, one-shot switch timer, switch at loop end, Next video / Switch every / Shuffle in the tray menu. Before that: README for testers, MIT license, issue forms (`2900f11`).
 
 ## Last Test
@@ -46,6 +49,9 @@ Several videos (ADR-012): multi-select picker and CLI, import queue, one-shot sw
 Real tray app: 3-video list via CLI, imports queued, timer + loop-end switches, Next / Shuffle / Switch every clicked in the menu, restart resume, 2-video list sent to the running copy, picker returning 2 files, memory over repeated switches (`logs/experiments.md`).
 
 ## Machine State Left Behind
+
+- Git identity for this repo: `user.email` = `228992827+Kali452345@users.noreply.github.com` (the owner chose not to publish the Gmail address).
+- The installer was tested and uninstalled again; the dev build `target\release\wallive.exe` (1.0.0) is running with the owner's restored settings.
 
 - The tray app is running with the owner's config restored (one video, "Anime Red Eye").
 - HKCU Run value `Wallive` is not set (Start with Windows off).

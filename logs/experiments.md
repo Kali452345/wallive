@@ -253,3 +253,14 @@ Paused: the timer fires at most once per interval (one `WM_TIMER`), and the swit
 ### Picker
 
 `wallive --pick` driven by script (`WM_SETTEXT` with two quoted paths in the file-name box, then `IDOK`): exit code 0, two paths printed, one per line. Dialog title "Choose videos for the wallpaper (several take turns)".
+
+## 2026-09-26 - Installer (ADR-013)
+
+| Item | Value |
+|---|---|
+| `Wallive-1.0.0-setup.exe` | 2.4 MB (lzma2/max, solid) |
+| Installed size | exe 459 KB + icon 279 KB + README / LICENSE + uninstaller 4.4 MB |
+| Silent install / reinstall with the app running | exit 0; running copy closed through `WM_CLOSE` in < 1 s |
+| Silent uninstall with the app running | exit 0; nothing left (files, shortcut, Run value, uninstall key, `%LOCALAPPDATA%\Wallive`, `%APPDATA%\Wallive`) |
+
+Runtime cost is unchanged: the installed exe is the same release build (one extra log line at start).

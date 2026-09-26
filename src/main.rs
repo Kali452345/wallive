@@ -4,6 +4,7 @@
 //!   wallive                                  run from the tray (settings in config.txt)
 //!   wallive <video> [<video> ...]            use these videos (several take turns); hands them to a running instance
 //!   wallive --quit                           ask a running instance to exit
+//!   wallive --version                        print the version
 //!   wallive --play <video>                   play <video> as-is, settings untouched (testing)
 //!   wallive --import <src> <dst> <W>x<H>     import child process (ADR-004)
 //!   wallive --pick                           file-dialog child process; prints the path
@@ -90,7 +91,7 @@ fn parse_size(s: &str) -> Option<(u32, u32)> {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: wallive [<video>... | --quit | --play <video> | --import <src> <dst> <W>x<H> | --pick | --make-test-clip <dst> [<W>x<H>] [fps] [secs] | --bench-decode <video> [loops]]"
+        "usage: wallive [<video>... | --quit | --version | --play <video> | --import <src> <dst> <W>x<H> | --pick | --make-test-clip <dst> [<W>x<H>] [fps] [secs] | --bench-decode <video> [loops]]"
     );
     std::process::exit(2);
 }
@@ -106,6 +107,7 @@ fn run_resident(options: runtime::Options) -> windows::core::Result<()> {
     if options.video.is_none() {
         open_log_file();
     }
+    log!("Wallive {}", env!("CARGO_PKG_VERSION"));
     runtime::run(options)
 }
 
@@ -121,6 +123,10 @@ fn main() {
             video: None,
             open: Vec::new(),
         }),
+        Some("--version") => {
+            println!("wallive {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         Some("--quit") => {
             if !shell::close_running() {
                 log!("Wallive is not running");

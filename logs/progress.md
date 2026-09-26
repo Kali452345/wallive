@@ -167,3 +167,23 @@ Read `logs/handoff.md`. Start the playback spike in the attached surface window.
 
 - Multi-monitor / 4K / Windows 10 still untested (README asks testers).
 - RAM while playing (81-85 MB private at 1080p).
+
+## 2026-09-26 - v1.0.0: installer, GitHub repository, release
+
+### Changed
+
+- Version 1.0.0 (`Cargo.toml`); `wallive --version`; the log starts with the version; the issue forms ask for it. `rust-version` corrected to 1.88 (let chains).
+- `installer/wallive.iss` (Inno Setup, per-user, optional autostart, closes the running copy, full uninstall) and `tools/package.ps1` (build, version check, ISCC, SHA-256), ADR-013.
+- `installer/wallive.ico` generated from the tray icon drawing (test `ico_file`).
+- `.github/workflows/ci.yml` (fmt, clippy, tests, release build on windows-latest), `CHANGELOG.md`, README install section (installer, SmartScreen, checksum, updating / uninstalling, building the installer).
+- Repository published as https://github.com/Kali452345/wallive (public). Before the first push, commit author emails were rewritten to the GitHub noreply address at the owner's request.
+
+### Verification
+
+- build / clippy / fmt / 71 tests pass; `tools/package.ps1` produced `Wallive-1.0.0-setup.exe` (2.4 MB).
+- Installer on this machine, silent mode:
+  - The install created the files, the Start menu shortcut, the Run value (task) and the uninstall entry (version 1.0.0, icon).
+  - The installed exe printed `wallive 1.0.0` and played.
+  - Reinstalling while it ran closed it and succeeded.
+  - Uninstalling while it ran closed it and removed the files, shortcut, Run value, uninstall entry and data folders.
+  - The owner's settings and imports were backed up before and restored after.

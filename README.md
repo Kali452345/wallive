@@ -1,12 +1,14 @@
 # Wallive
 
+[![CI](https://github.com/Kali452345/wallive/actions/workflows/ci.yml/badge.svg)](https://github.com/Kali452345/wallive/actions/workflows/ci.yml) [![Latest release](https://img.shields.io/github/v/release/Kali452345/wallive)](https://github.com/Kali452345/wallive/releases/latest)
+
 A live video wallpaper for Windows 10 and 11 that tries to cost almost nothing. The video plays behind your desktop icons using the graphics chip's hardware video decoder, and it pauses by itself when you can't see it.
 
 - A small native program (Rust + Win32). No browser engine, no .NET, no bundled FFmpeg.
 - Tray icon only: right-click it to choose videos, pause, or quit.
 - Videos you choose are converted once, in the background, into a format your PC decodes in hardware. Playback then uses the converted copy.
 
-> **Status: early.** It works well on the one machine it was developed on. Many setups have never been tried, and help testing them is very welcome (see [What is tested](#what-is-tested) and [Reporting problems](#reporting-problems)).
+> **Version 1.0.0 - early.** It works well on the one machine it was developed on. Many setups have never been tried, and help testing them is very welcome (see [What is tested](#what-is-tested) and [Reporting problems](#reporting-problems)).
 
 ## Features
 
@@ -58,12 +60,23 @@ If you have one of the untested setups, trying Wallive and reporting what happen
 
 ## Install and use
 
-There are no prebuilt downloads yet; build from source:
+### Installer (recommended)
 
-1. Install [Rust](https://rustup.rs/) (MSVC toolchain) and the Visual Studio Build Tools with the "Desktop development with C++" workload.
-2. `cargo build --release`
-3. Run `target\release\wallive.exe`. On first start it asks for videos. Afterwards, right-click the tray icon.
+1. Download `Wallive-<version>-setup.exe` from [Releases](../../releases/latest). Windows 10 or 11, 64-bit.
+2. Run it. It installs for your user only (`%LOCALAPPDATA%\Programs\Wallive`) and needs no admin rights. It can start Wallive when you sign in.
+   - The installer is not code-signed yet, so Windows SmartScreen may say "Windows protected your PC". Click **More info** > **Run anyway**. You can compare the file with the `.sha256` checksum next to it on the release page (`Get-FileHash Wallive-<version>-setup.exe`).
+3. On first start Wallive asks for videos. Afterwards, right-click the tray icon.
    - Windows 11 may hide new tray icons under the **^** arrow; drag the icon onto the taskbar to keep it visible.
+
+Updating: run the newer installer; it closes the running copy and keeps your settings. Uninstalling (Settings > Apps > Installed apps > Wallive) also removes the settings, the converted videos and the log.
+
+### Build from source
+
+1. Install [Rust](https://rustup.rs/) 1.88 or later (MSVC toolchain) and the Visual Studio Build Tools with the "Desktop development with C++" workload.
+2. `cargo build --release`
+3. Run `target\release\wallive.exe`.
+
+To build the installer: install [Inno Setup](https://jrsoftware.org/isinfo.php) 6.3 or later, then run `powershell -ExecutionPolicy Bypass -File tools\package.ps1`. The installer and its checksum are written to `dist\`.
 
 Command line:
 
@@ -72,6 +85,7 @@ Command line:
 | `wallive` | Start (or do nothing if already running) |
 | `wallive <video> [<video> ...]` | Use these videos (sent to the running copy if there is one) |
 | `wallive --quit` | Close the running copy |
+| `wallive --version` | Print the version |
 | `wallive --play <video>` | Play a file as-is, without saving settings (testing) |
 | `wallive --bench-decode <video>` | Measure hardware decode speed |
 
@@ -110,7 +124,7 @@ Fixes and test reports for the untested setups above are especially welcome.
    cargo fmt --check
    cargo test
    ```
-4. Open a pull request describing what you changed, how you tested it (Windows version, monitors, GPU), and the measured cost if relevant. Notes about decisions go in [`docs/decisions.md`](docs/decisions.md), problems found in [`logs/errors.md`](logs/errors.md).
+4. Open a pull request describing what you changed (CI runs the same checks on Windows), how you tested it (Windows version, monitors, GPU), and the measured cost if relevant. Notes about decisions go in [`docs/decisions.md`](docs/decisions.md), problems found in [`logs/errors.md`](logs/errors.md).
 
 Project documentation: [`docs/architecture.md`](docs/architecture.md), [`docs/testing.md`](docs/testing.md), [`docs/known-issues.md`](docs/known-issues.md).
 

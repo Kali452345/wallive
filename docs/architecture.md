@@ -34,6 +34,7 @@ Implemented (2026-09-26):
 - `src/power/`: display state, Battery / Energy Saver, AC/DC, session lock / remote, EcoQoS
 - `src/shell/`: tray icon and menu, Start with Windows, single instance, file picker, job object (ADR-011)
 - `src/config/`: `config.txt` in `%APPDATA%\Wallive` (video list, interval, shuffle, pause settings), cache paths (ADR-011, ADR-012)
+- `installer/wallive.iss` + `tools/package.ps1`: per-user Inno Setup installer (ADR-013); `.github/workflows/ci.yml`: CI checks
 - `tools/bench.ps1` (benchmark mode, ADR-010), `tools/pause-check.ps1`, `tools/inspect-desktop.ps1`
 - `docs/`, `logs/`
 

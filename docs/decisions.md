@@ -381,3 +381,32 @@ The owner asked to choose several videos that take turns, switching every few mi
 ### Revisit when
 
 Clips longer than the interval make switches feel late (a cap could force the switch mid-scene), or users want per-video intervals.
+
+## ADR-013 - Distribution: per-user Inno Setup installer, GitHub Releases
+
+Date: 2026-09-26
+
+### Decision
+
+- The installer is built with Inno Setup 6.3+ from `installer/wallive.iss` by `tools/package.ps1`. The script reads the version from `Cargo.toml` and refuses an exe whose `--version` does not match. The installer goes to `dist\Wallive-<version>-setup.exe` with a `.sha256` file.
+- Per-user install (`PrivilegesRequired=lowest`) to `%LOCALAPPDATA%\Programs\Wallive`: no UAC prompt, matching the Run-key autostart (ADR-011). x64 only, Windows 10+.
+- An optional, preselected task writes the same HKCU Run value as the tray menu. Uninstall removes that value if it points at the install folder, even when it was set from the tray.
+- Setup and uninstall close a running copy by posting `WM_CLOSE` to the `WalliveHost` window (like `wallive --quit`) and wait up to 10 s. The Restart Manager is off because it cannot close a tray app without a main window.
+- Uninstall deletes `%LOCALAPPDATA%\Wallive` (imports, log) and `%APPDATA%\Wallive` (settings).
+- The icon `installer/wallive.ico` (16 / 32 / 48 / 256) is generated from the tray icon's drawing code by a test (`WALLIVE_WRITE_ICO=<path> cargo test ico_file`). The exe itself still has no icon resource (ADR-009).
+- Releases are GitHub Releases tagged `vX.Y.Z` with the installer and checksum attached, built locally for now. CI (`.github/workflows/ci.yml`, windows-latest) runs fmt, clippy, tests and a release build on pushes to `main` and on pull requests.
+- The installer is not code-signed. The README explains the SmartScreen prompt and the checksum.
+
+### Context
+
+The owner asked for an Inno Setup installer and a v1.0.0 release on GitHub. The app must not need admin rights (autostart is per user) or add runtime dependencies.
+
+### Alternatives considered
+
+- MSI (WiX) / MSIX: MSIX needs signing and packages the app in a container (the Run key and `%APPDATA%` paths would be virtualized); WiX is heavier to maintain for one exe.
+- Machine-wide install to Program Files: needs UAC for every install and update, while the app's autostart and data are per user anyway.
+- Building the installer in CI on tag push: reproducible, but it needs Inno Setup on the runner and has not been set up yet.
+
+### Revisit when
+
+Code signing becomes available (sign both the exe and the installer), or releases should be built in CI.

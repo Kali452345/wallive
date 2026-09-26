@@ -336,4 +336,62 @@ mod tests {
         assert_eq!(edge >> 24, 255);
         assert_ne!(edge & 0x00ff_ffff, 0x00ff_ffff, "background is coloured");
     }
+
+    /// A Windows `.ico` with 32-bpp images of `icon_pixels` at `sizes`.
+    fn ico(sizes: &[u32]) -> Vec<u8> {
+        let mut images = Vec::new();
+        for &size in sizes {
+            let px = icon_pixels(size);
+            let mask_row = size.div_ceil(32) * 4;
+            let mut img = Vec::new();
+            for v in [40, size, size * 2] {
+                img.extend(v.to_le_bytes());
+            }
+            img.extend(1u16.to_le_bytes()); // planes
+            img.extend(32u16.to_le_bytes()); // bits per pixel
+            img.extend([0u8; 24]); // BI_RGB, sizes and palette unused
+            // Bottom-up rows; 0xAARRGGBB little-endian is B, G, R, A.
+            for row in (0..size).rev() {
+                for x in 0..size {
+                    img.extend(px[(row * size + x) as usize].to_le_bytes());
+                }
+            }
+            img.resize(img.len() + (mask_row * size) as usize, 0); // AND mask
+            images.push((size, img));
+        }
+        let mut out = Vec::new();
+        out.extend(0u16.to_le_bytes());
+        out.extend(1u16.to_le_bytes()); // icon
+        out.extend((images.len() as u16).to_le_bytes());
+        let mut offset = 6 + 16 * images.len() as u32;
+        for (size, img) in &images {
+            let dim = if *size >= 256 { 0 } else { *size as u8 };
+            out.extend([dim, dim, 0, 0]);
+            out.extend(1u16.to_le_bytes());
+            out.extend(32u16.to_le_bytes());
+            out.extend((img.len() as u32).to_le_bytes());
+            out.extend(offset.to_le_bytes());
+            offset += img.len() as u32;
+        }
+        for (_, img) in &images {
+            out.extend(img);
+        }
+        out
+    }
+
+    /// Checks the `.ico` layout. With `WALLIVE_WRITE_ICO=<path>` also writes
+    /// it there (`installer/wallive.ico` is made this way).
+    #[test]
+    fn ico_file() {
+        let data = ico(&[16, 32, 48, 256]);
+        assert_eq!(&data[..6], &[0, 0, 1, 0, 4, 0]);
+        let first = u32::from_le_bytes(data[14..18].try_into().unwrap()) as usize;
+        let offset = u32::from_le_bytes(data[18..22].try_into().unwrap()) as usize;
+        assert_eq!(offset, 6 + 16 * 4);
+        assert_eq!(first, 40 + 16 * 16 * 4 + 16 * 4);
+        assert_eq!(data[offset], 40);
+        if let Some(path) = std::env::var_os("WALLIVE_WRITE_ICO") {
+            std::fs::write(path, &data).unwrap();
+        }
+    }
 }
