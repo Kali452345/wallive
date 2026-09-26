@@ -50,6 +50,92 @@ Explorer killed again with the fix: `TaskbarCreated` at 16.16 s, re-attached at 
 
 RESOLVED
 
+## 2026-09-26 - Video presented at ~4 fps: DWM throttles vsync presents under the icon layer
+
+### Area
+
+`src/playback/ffi.rs` - swap-chain pacing (backend 2).
+
+### Symptoms
+
+The 1080p30 clip played at ~4 fps. The frame-latency waitable object was released only every ~250 ms (sometimes 500 ms).
+
+### Environment
+
+- OS: Windows 11 Pro 10.0.26200, raised desktop, UHD 620, 60.05 Hz panel
+- Runtime: rustc 1.98.1 MSVC, `windows` 0.62.2
+
+### Error
+
+No error; the `playback: N frames/s` log lines reported about 4 frames/s.
+
+### Root Cause
+
+DWM treats our wallpaper visual as occluded (the full-screen `SHELLDLL_DefView` icon layer sits above it), and throttles vsync-synced presents (`Present(1)`, `Present(2)`) for occluded windows to about 4 Hz.
+
+### Failed Attempts
+
+1. `Present(1)` instead of `Present(2)` - identical ~4 fps.
+2. `Present(0)` + `IDXGIOutput::WaitForVBlank` x N - `WaitForVBlank` returned immediately for this windowed swap chain, so ~500 fps.
+
+### Working Fix
+
+`Present(0)`, then hold the frame for N compositor ticks with `DCompositionWaitForCompositorClock` (Windows 11; resolved from dcomp.dll at run time), waiting on the control event in the same call. Windows 10 falls back to `Present(n)`; whether it is throttled there is unverified.
+
+### Verification
+
+30.0 fps over 40 s traced runs, loop rewinds exactly every 10.0 s (`logs/experiments.md`).
+
+### Related Files
+
+- `src/playback/ffi.rs`
+- `src/playback/mod.rs`
+
+### Status
+
+RESOLVED on Windows 11; OPEN (unverified) on Windows 10.
+
+## 2026-09-26 - Benchmark / test scripts: PowerShell 5.1 pitfalls
+
+### Area
+
+`tools/bench.ps1`, `tools/pause-check.ps1`.
+
+### Symptoms
+
+1. `bench.ps1` could not close wallive: `FindWindowW('WalliveHost', $null)` returned NULL.
+2. `pause-check.ps1` failed with "Cannot bind argument to parameter 'Path' because it is an empty string" in the `-Exe` default.
+3. Script text written through the Bash tool's heredoc had `\r`, `\t` in Windows paths turned into control characters.
+
+### Environment
+
+- Windows PowerShell 5.1; Git Bash (Bash tool).
+
+### Root Cause
+
+1. `$null` passed to a P/Invoke `string` parameter is marshalled as `""`, not NULL; a window titled "" does not exist.
+2. `$PSScriptRoot` is empty inside `param()` default expressions in Windows PowerShell 5.1 when run with `-File`.
+3. Shell quoting of backslashes in the heredoc / sed replacement.
+
+### Working Fix
+
+1. Pass `[NullString]::Value`.
+2. Default `-Exe` to `''` and resolve it after `param()` from `$MyInvocation.MyCommand.Path`.
+3. Write scripts with the file-writing tool (or Python with forward-slash paths) and assert there are no stray `\r` / `\t` after edits.
+
+### Verification
+
+Both scripts ran end to end (results in `logs/experiments.md`).
+
+### Related Files
+
+- `tools/bench.ps1`
+- `tools/pause-check.ps1`
+
+### Status
+
+RESOLVED
+
 ## Template
 
 ### Date

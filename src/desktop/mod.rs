@@ -157,6 +157,19 @@ impl Wallpaper {
             .collect()
     }
 
+    /// Monitor rectangles that carry a wallpaper window, in screen pixels.
+    pub fn monitors(&self) -> Vec<crate::occlusion::Rect> {
+        self.screens
+            .iter()
+            .map(|s| crate::occlusion::Rect {
+                left: s.monitor.left,
+                top: s.monitor.top,
+                right: s.monitor.right,
+                bottom: s.monitor.bottom,
+            })
+            .collect()
+    }
+
     pub fn detach(&mut self) {
         for screen in self.screens.drain(..) {
             screen.destroy();

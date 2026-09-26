@@ -105,7 +105,12 @@ impl Player {
         self.restart();
     }
 
-    #[expect(dead_code, reason = "wired up by the pause policy (power / occlusion)")]
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Pauses or resumes the video thread. Paused, it sleeps on a kernel
+    /// event and the last frame stays on screen.
     pub fn set_paused(&mut self, paused: bool) {
         if paused == self.paused {
             return;
@@ -272,8 +277,14 @@ impl Job {
         loop {
             match self.control.state.load(Ordering::Acquire) {
                 STOP => return Ok(()),
-                PAUSE => {
+                // A thread started while paused still shows one frame, so a
+                // re-attach during a pause does not leave the wallpaper empty.
+                PAUSE if announced => {
                     self.control.signal.wait();
+                    rate = RateLog {
+                        reports: rate.reports,
+                        ..RateLog::default()
+                    };
                     continue;
                 }
                 _ => {}

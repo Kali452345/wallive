@@ -153,6 +153,17 @@ Zero cost while nothing changes. It uses observe-only APIs.
 
 Event storms (for example while dragging windows) show measurable CPU. In that case raise the debounce or drop location-change events while a mouse drag is in progress.
 
+### Implementation notes (2026-09-26)
+
+- "Paused" now means the video thread sleeps on its control event (backend 2, ADR-003 revised); the last frame stays on screen. A video thread started while paused (re-attach) still shows one frame first.
+- Hooks: six narrow ranges (foreground, move/size end, minimize start..end, show..hide, location change, cloaked..uncloaked). The callback keeps only `OBJID_WINDOW` events for top-level windows, or for windows already destroyed (a hide may arrive after the window is gone), and re-arms a 200 ms one-shot `SetTimer` on the host window. That timer is the debounce, not polling: it exists only after an event and is killed when it fires.
+- The coverage check does not need z-order: every visible top-level window is above the wallpaper. Union area per monitor by coordinate compression. Occluders are visible, not minimized, not cloaked, not click-through (`WS_EX_LAYERED | WS_EX_TRANSPARENT`), not Progman/WorkerW, and not tool windows except the taskbars. A maximized window plus the taskbar is 100%; a maximized window alone is 95.6% at 1080p.
+- Fullscreen: `QUNS_BUSY`, `QUNS_RUNNING_D3D_FULL_SCREEN`, `QUNS_PRESENTATION_MODE`, re-read with each coverage check.
+- Power: `GUID_SESSION_DISPLAY_STATUS` (the documented choice for user-mode apps, rather than `GUID_CONSOLE_DISPLAY_STATE`), `GUID_POWER_SAVING_STATUS`, `GUID_ENERGY_SAVER_STATUS` (Windows 11 24H2+; defined locally because the `windows` crate lacks it) and `GUID_ACDC_POWER_SOURCE`. Pausing on battery is an option, off by default; the savers always pause.
+- Session: lock/unlock, console/remote connect/disconnect, plus `SM_REMOTESESSION`.
+- All reasons feed one `PauseReasons` set in `runtime`; playback runs only when it is empty.
+- Measured cost (logs/experiments.md): paused 0-0.6% of one core; out-of-context `LOCATIONCHANGE` delivery for cursor moves costs ~30 us per event (~3% of one core at a continuous 1000 Hz mouse, ~0.4% at 125 Hz, 0 when the mouse is still). Kept because it is the only event for maximize / restore / snap.
+
 ## ADR-006 - Desktop attach: support both Explorer layouts
 
 ### Decision

@@ -10,7 +10,9 @@
 //! Console output is the log; Ctrl+C exits.
 
 mod desktop;
+mod occlusion;
 mod playback;
+mod power;
 mod runtime;
 mod transcode;
 
@@ -47,11 +49,15 @@ fn main() {
     uptime_ms();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
-        None => runtime::run(runtime::Options { video: None }),
+        None => runtime::run(runtime::Options {
+            video: None,
+            pause_on_battery: false,
+        }),
         Some("--play") => {
             let Some(video) = args.get(1) else { usage() };
             runtime::run(runtime::Options {
                 video: Some(PathBuf::from(video)),
+                pause_on_battery: false,
             })
         }
         Some("--import") => {

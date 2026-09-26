@@ -2,60 +2,57 @@
 
 ## Current Branch
 
-`spike/desktop-attach` (branched from `main` at `e176c41`, the docs scaffold). Last checkpoint: `5a4de53` (desktop-attach spike). Not merged yet.
+`spike/desktop-attach` (branched from `main` at `e176c41`). Checkpoints: `5a4de53` attach spike, `5a89838` Media Engine spike, `2472626` playback backend 2, then the pause-policy commit ("Pause policy: occlusion, fullscreen, power, session"). Not merged yet.
 
 ## Last Verified Build
 
-2026-09-26: `cargo build --release`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test` (17 passed). rustc 1.98.1 MSVC, `windows` 0.62.2.
+2026-09-26: `cargo build --release`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test` (50 passed). rustc 1.98.1 MSVC, `windows` 0.62.2. `cargo` is not on PATH in agent shells: prepend `C:\Users\KaliOxygen\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin`.
 
 ## Current Phase
 
-Spikes. Desktop-attach spike done on the raised desktop; playback spike next.
+Features on top of working playback. Done: attach, playback, pause policy. Next: tray + config + import integration + Start with Windows + single instance.
 
 ## Working Features
 
-- `cargo run --release` puts a solid teal window behind the desktop icons on every monitor (Windows 11 raised desktop verified) and logs to the console.
-- Re-attaches after Explorer restart (`TaskbarCreated`) and on `WM_DISPLAYCHANGE`; keeps z-order under the icons via an Explorer-scoped WinEvent hook. No timers.
-- Clean exit on Ctrl+C or `WM_CLOSE` to the `WalliveHost` window.
+- `wallive --play <video>`: video behind the desktop icons on every monitor (Windows 11 raised desktop verified), 1080p30 at ~0.8% of the CPU.
+- Re-attach after Explorer restart and display changes; playback resumes at the saved position.
+- Pause when every monitor is covered, for fullscreen apps, display off, Battery / Energy Saver, session lock / disconnect / remote; optional pause on battery (no UI for it yet). Paused costs ~0 CPU.
+- `--import`, `--make-test-clip`, `--bench-decode` CLI modes. `tools/bench.ps1` (benchmark mode) and `tools/pause-check.ps1` (real-desktop pause test).
 
 ## In Progress
 
-- Nothing half-done in code. Next is the playback spike.
+- Nothing half-done in code.
 
 ## Broken or Risky
 
-- Classic WorkerW layout never run on a real classic desktop.
-- Multi-monitor and real display changes untested (one monitor on owner machine).
-- Explorer layer recreation (wallpaper/slideshow change) only unit-tested.
-- Unknown: whether a DirectComposition target on the surface window (a child of a *layered* holder) presents correctly. If not, try the DComp target on the holder itself, or drop the holder and target a plain child of Progman (DComp/flip presents do not need Progman's redirection surface).
+- Working set ~115-120 MB vs the 30 MB target (decoder surfaces, video processor and swap-chain buffers are counted in the process on this iGPU).
+- Classic WorkerW layout and Windows 10 never run on real hardware; Windows 10 pacing falls back to `Present(n)`, which may be throttled to ~4 fps like it is on Windows 11 (`logs/errors.md`).
+- Multi-monitor untested (one monitor on the owner machine).
+- Unverified pause triggers: exclusive-fullscreen game, saver toggles, battery, session lock.
+- Mouse movement costs ~30 us per event through the LOCATIONCHANGE hook (ADR-005 notes).
 
 ## Last Change
 
-Desktop-attach spike plus fix for sent messages not waking the message loop (`logs/errors.md`).
+Pause policy (ADR-005): `src/occlusion/`, `src/power/`, `src/runtime/pause.rs`, hooks / timer / power and session messages in `src/runtime/ffi.rs`.
 
 ## Last Test
 
-Real desktop on Windows 11 26200: tree dump + screenshot, Explorer kill/restart, synthetic display change, 60 s and 120 s idle CPU measurement (`logs/experiments.md`).
+Real desktop, `tools/pause-check.ps1` plus Win+D, virtual-desktop and fullscreen flows; `tools/bench.ps1` 60 s playing run (`logs/experiments.md`).
 
 ## Known Blockers
 
-- None for the next task. Classic-layout testing needs a Windows 10 or pre-24H2 VM.
+- None. Classic-layout testing needs a Windows 10 or pre-24H2 machine.
 
 ## Recommended Next Task
 
-Playback spike (ADR-003 / ADR-007), in the existing surface window from `desktop::Wallpaper`:
-
-1. D3D11 device (video support flag) + `IMFDXGIDeviceManager`; `IMFMediaEngine` with `MF_MEDIA_ENGINE_DXGI_MANAGER`, looping, muted.
-2. `IMFMediaEngineEx::EnableWindowlessSwapchainMode(TRUE)`, get the handle with `GetVideoSwapchainHandle`, and show it through `IDCompositionDevice::CreateSurfaceFromHandle` on a DComp visual targeting the surface window. Update the video rect with `UpdateVideoStream` on size change.
-3. Hand-made 1080p30 H.264 test clip (no audio). Measure CPU / GPU engines / RAM, capture PresentMon to see the present mode (MPO or not), record in `logs/experiments.md`.
-4. Then try the same swap-chain surface in a second visual to validate ADR-007 (can be a second window on one monitor).
-
-Verify every API against current Microsoft docs first; update ADR-003 / ADR-007 "Unverified" sections with the results.
+1. Config: `%APPDATA%\Wallive\config.txt` key=value (video, pause_on_battery, paused), pure parser + tests.
+2. Tray (`Shell_NotifyIconW`): runtime-drawn icon, menu Choose video... / Pause / Start with Windows / Quit; re-add on `TaskbarCreated`.
+3. Import integration: run `wallive --import` as a child process (below-normal priority, no window) into `%LOCALAPPDATA%\Wallive\cache`, switch playback when done.
+4. Start with Windows (HKCU Run), single instance (named mutex), `windows_subsystem = "windows"` + file log.
 
 ## Files Most Relevant to Next Task
 
-- `src/desktop/mod.rs` (surface window per monitor)
-- `src/runtime/mod.rs` (event wiring)
-- `docs/decisions.md` (ADR-003, ADR-007)
-- `docs/architecture.md`
-- `logs/experiments.md`
+- `src/runtime/mod.rs`, `src/runtime/ffi.rs`
+- `src/main.rs`
+- `src/transcode/mod.rs`
+- `docs/decisions.md`

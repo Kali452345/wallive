@@ -108,3 +108,36 @@ Can Wallive put its own window behind the desktop icons on the owner's Windows 1
 - vs the Media Engine: CPU 24.6% -> ~6% of a core (3.1% -> ~0.8% of the CPU, **inside the <1% budget**), GPU decode + processing ~21% -> ~15%, working set 155 -> ~115 MB.
 - RAM is still far over the 30 MB target; decoder surfaces, the video processor and two 1080p BGRA swap-chain buffers live in shared memory on this integrated GPU. Next levers: fewer decoder surfaces (`MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT`), NV12 swap chain (no BGRA buffers, no conversion), trimming when paused.
 - Windows 10 has no compositor clock; there the code falls back to `Present(n)`. Whether classic-layout windows get the same ~4 fps throttling is **unverified** (needs a Windows 10 / pre-24H2 machine).
+
+## 2026-09-26 - Pause policy (ADR-005): occlusion, fullscreen, power, session
+
+### Setup
+
+- Same machine (i5-8350U, UHD 620, 1920x1080 @ 60.05 Hz, Windows 11 26200, AC) and 1080p30 clip.
+- `tools/pause-check.ps1` drives the real desktop from another process (WinForms windows, synthetic input, `SC_MONITORPOWER`) and reads wallive's log; 10 s measurement windows. Flow checks for Win+D and virtual desktops were run with a scratch script using the same approach.
+- 6 global out-of-context WinEvent hooks, 200 ms one-shot debounce, then `EnumWindows` + DWM frame bounds / cloak state + `SHQueryUserNotificationState`. EcoQoS on.
+
+### Result
+
+| Phase | CPU (% of one core) | CPU (% of all 8) | Working set | Log |
+|---|---|---|---|---|
+| playing (bench.ps1, 60 s) | 6.43 | 0.804 | 120 MB | GPU decode 7.4%, processing 9.1%; 30.2 fps with EcoQoS |
+| maximized window (paused) | 0.00 - 0.62 | 0.000 - 0.078 | 112-116 MB | `pause: desktop covered` ~200 ms after the window appeared |
+| paused + mouse storm (~1000 synthetic moves/s) | 2.96 | 0.371 | 116 MB | ~1000 cursor LOCATIONCHANGE events/s delivered to us |
+| window closed | playing again | | | `playback: resumed` |
+| half-screen window | 3.9 - 7.5 (playing) | | | no pause (correct) |
+| display off (`SC_MONITORPOWER`) | paused | | | `power: DisplayOn(false)` -> `pause: display off`; Windows flapped on/off several times, playback followed every change |
+
+Flow checks (all correct):
+- maximized -> paused; Win+D -> resumed; Win+D again -> paused; close -> resumed.
+- borderless topmost fullscreen window -> `pause: desktop covered, fullscreen app`; close -> resumed.
+- maximized -> paused; Ctrl+Win+D (new virtual desktop, window cloaked) -> resumed; Ctrl+Win+F4 (back) -> paused; close -> resumed.
+- Startup: Windows delivered all four power settings (display, Battery Saver, Energy Saver, AC/DC) right after registration, so no initial query is needed. `GUID_ENERGY_SAVER_STATUS` registers fine on 26200.
+
+Occlusion check cost: 9-51 checks per run, 1.5-4.5 ms average, 2.5-39 ms max (the max was during the display-off flapping). Runs only after 200 ms of quiet, on the UI thread.
+
+### Conclusion
+
+- Paused really is ~0: the video thread sleeps on a kernel event, the UI thread only wakes for events.
+- The cost of watching is the out-of-context delivery of `EVENT_OBJECT_LOCATIONCHANGE`, which also fires for every cursor move: ~30 us per event, i.e. ~3% of one core (0.37% of the CPU) at a continuous 1000 Hz mouse, ~0.4% of one core at 125 Hz, 0 when the mouse is still. It is the only event that catches maximize / restore / snap / programmatic resizes, so it stays; recorded as ADR-005's "revisit when" data point.
+- Not verified: `QUNS_RUNNING_D3D_FULL_SCREEN` with a real exclusive-fullscreen game; Battery Saver / Energy Saver toggles and battery power (machine on AC; the notifications arrive, the mapping is unit-tested); session lock (cannot unlock unattended).

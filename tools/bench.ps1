@@ -16,7 +16,7 @@
 #   batt   battery discharge rate (mW) when on battery, else "AC"
 # -Attach measures an already-running process instead of starting one.
 param(
-  [string]$Exe = (Join-Path $PSScriptRoot '..\target\release\wallive.exe'),
+  [string]$Exe = '',
   [string]$WalliveArgs = '',
   [int]$WarmupSec = 10,
   [int]$Seconds = 60,
@@ -26,6 +26,8 @@ param(
   [switch]$KeepRunning
 )
 $ErrorActionPreference = 'Stop'
+# $PSScriptRoot is empty in param defaults on Windows PowerShell 5.1.
+if (-not $Exe) { $Exe = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) '..\target\release\wallive.exe' }
 Add-Type -Name Win -Namespace Bench -MemberDefinition @'
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowW(string cls, string title);
 [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h, uint msg, IntPtr w, IntPtr l);
