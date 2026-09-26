@@ -2,7 +2,7 @@
 
 ## Current Branch
 
-`spike/desktop-attach` (branched from `main` at `e176c41`, the docs scaffold). Not merged yet.
+`spike/desktop-attach` (branched from `main` at `e176c41`, the docs scaffold). Last checkpoint: `5a4de53` (desktop-attach spike). Not merged yet.
 
 ## Last Verified Build
 
